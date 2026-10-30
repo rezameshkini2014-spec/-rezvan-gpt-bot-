@@ -1,164 +1,184 @@
+'use strict';
 
-"use strict";
+const crypto = require('crypto');
 
-const crypto = require("crypto");
-
-const CONFIG = {
-  BALE_TOKEN: process.env.BALE_BOT_TOKEN || "",
-  OPENAI_KEY: process.env.OPENAI_API_KEY || "",
-  OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-4o-mini",
-  AI_BASE_URL: (process.env.AI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, ""),
-  REDIS_URL: (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/+$/, ""),
-  REDIS_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN || "",
-  WEBHOOK_SECRET: process.env.BALE_WEBHOOK_SECRET || "",
-  SETUP_SECRET: process.env.WEBHOOK_SETUP_SECRET || "",
-  APP_URL: (process.env.APP_BASE_URL || "").replace(/\/+$/, ""),
-  ADMIN_ID: String(process.env.ADMIN_USER_ID || process.env.ADMIN_BALE_USER_ID || ""),
-  ADMIN_PASSWORD_1: process.env.ADMIN_PASSWORD_1 || "",
-  ADMIN_PASSWORD_2: process.env.ADMIN_PASSWORD_2 || "",
-  DAILY_QUOTA: Math.max(1, Number(process.env.DAILY_QUOTA || 20)),
-  MONTHLY_QUOTA: Math.max(1, Number(process.env.MONTHLY_QUOTA || 300)),
-  POLITICAL_KEYWORDS: process.env.POLITICAL_KEYWORDS || "انتخابات|رئیس جمهور|رئیس‌جمهور|مجلس شورای اسلامی|حزب سیاسی|نامزد انتخاباتی|رقابت انتخاباتی|تبلیغات انتخاباتی|سیاستمدار"
+const ENV = process.env;
+const C = {
+  baleToken: ENV.BALE_BOT_TOKEN || '',
+  redisUrl: (ENV.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, ''),
+  redisToken: ENV.UPSTASH_REDIS_REST_TOKEN || '',
+  aiKey: ENV.OPENAI_API_KEY || '',
+  aiBase: (ENV.AI_BASE_URL || 'https://api.gapgpt.app/v1').replace(/\/+$/, ''),
+  aiModel: ENV.OPENAI_MODEL || '',
+  webhookSecret: ENV.BALE_WEBHOOK_SECRET || '',
+  setupSecret: ENV.WEBHOOK_SETUP_SECRET || '',
+  appUrl: (ENV.APP_BASE_URL || '').replace(/\/+$/, ''),
+  adminId: String(ENV.ADMIN_USER_ID || ''),
+  adminPass1: ENV.ADMIN_PASSWORD_1 || '',
+  adminPass2: ENV.ADMIN_PASSWORD_2 || '',
+  dailyQuota: Math.max(0, Number(ENV.DAILY_QUOTA || 20)),
+  monthlyQuota: Math.max(0, Number(ENV.MONTHLY_QUOTA || 300)),
+  politicalKeywords: ENV.POLITICAL_KEYWORDS || 'انتخابات|رئیس جمهور|رئیس‌جمهور|مجلس شورای اسلامی|حزب سیاسی|نامزد انتخاباتی|رقابت انتخاباتی|تبلیغات انتخاباتی|سیاستمدار'
 };
 
-const BALE_API = "https://tapi.bale.ai/bot" + CONFIG.BALE_TOKEN;
+const BALE_API = 'https://tapi.bale.ai/bot' + C.baleToken;
 
-const KEY = {
-  user: id => "user:" + id,
-  state: id => "state:" + id,
-  username: name => "username:" + name.toLowerCase(),
-  context: id => "context:" + id,
-  history: id => "history:" + id,
-  quotaDay: (id, date) => "quota:day:" + id + ":" + date,
-  quotaMonth: (id, month) => "quota:month:" + id + ":" + month,
-  adminAuth: id => "admin:auth:" + id,
-  failedAdmin: id => "admin:failed:" + id,
-  supportGroup: "config:support_group",
-  ticket: id => "ticket:" + id,
-  ticketSequence: "ticket:sequence",
-  tickets: "tickets:all",
-  users: "users:all",
-  update: id => "processed:update:" + id,
-  configDaily: "config:daily_quota",
-  configMonthly: "config:monthly_quota",
-  botEnabled: "config:bot_enabled",
-  userDailyQuota: id => "user:quota:daily:" + id,
-  userMonthlyQuota: id => "user:quota:monthly:" + id
+const K = {
+  user: id => `user:${id}`,
+  state: id => `state:${id}`,
+  username: name => `username:${String(name).toLowerCase()}`,
+  context: id => `context:${id}`,
+  history: id => `history:${id}`,
+  day: (id, d) => `quota:day:${id}:${d}`,
+  month: (id, m) => `quota:month:${id}:${m}`,
+  userDay: id => `user:quota:daily:${id}`,
+  userMonth: id => `user:quota:monthly:${id}`,
+  adminSession: id => `admin:session:${id}`,
+  adminFail: id => `admin:failed:${id}`,
+  adminLock: id => `admin:locked:${id}`,
+  ticket: id => `ticket:${id}`,
+  ticketSeq: 'ticket:sequence',
+  tickets: 'tickets:all',
+  users: 'users:all',
+  supportGroup: 'config:support_group',
+  botEnabled: 'config:bot_enabled',
+  dailyConfig: 'config:daily_quota',
+  monthlyConfig: 'config:monthly_quota',
+  processed: id => `processed:update:${id}`,
+  processing: id => `processing:update:${id}`,
+  chatLock: id => `lock:chat:${id}`,
+  aiRate: id => `rate:ai:${id}`,
+  aiLock: id => `lock:ai:${id}`,
+  broadcastIds: id => `broadcast:ids:${id}`,
+  broadcastSent: id => `broadcast:sent:${id}`
 };
 
-const MAIN_MENU = [
-  [{ text: "💬 گفت‌وگوی جدید", callback_data: "newchat" }],
-  [{ text: "📚 تاریخچه گفتگوها", callback_data: "history" }],
-  [{ text: "👤 حساب کاربری", callback_data: "account" }],
-  [{ text: "🎧 پشتیبانی", callback_data: "support" }],
-  [
-    { text: "📖 راهنمای ربات", callback_data: "help" },
-    { text: "ℹ️ درباره ربات", callback_data: "about" }
-  ]
+const MENU = [
+  [{ text: '💬 گفت‌وگوی جدید', callback_data: 'newchat' }],
+  [{ text: '📚 تاریخچه گفتگوها', callback_data: 'history' }],
+  [{ text: '👤 حساب کاربری', callback_data: 'account' }],
+  [{ text: '🎧 پشتیبانی', callback_data: 'support' }],
+  [{ text: '📖 راهنما', callback_data: 'help' }, { text: 'ℹ️ درباره', callback_data: 'about' }]
 ];
 
 const ADMIN_MENU = [
-  [
-    { text: "📊 آمار ربات", callback_data: "admin:stats" },
-    { text: "👥 کاربران", callback_data: "admin:users" }
-  ],
-  [
-    { text: "🎟 سهمیه‌ها", callback_data: "admin:quota" },
-    { text: "🎫 تیکت‌ها", callback_data: "admin:tickets" }
-  ],
-  [
-    { text: "📨 پیام همگانی", callback_data: "admin:broadcast" },
-    { text: "✉️ پیام خصوصی", callback_data: "admin:private" }
-  ],
-  [
-    { text: "🔌 وضعیت سرویس‌ها", callback_data: "admin:status" },
-    { text: "⚙️ تنظیمات", callback_data: "admin:settings" }
-  ],
-  [{ text: "🔘 روشن / خاموش کردن ربات", callback_data: "admin:togglebot" }],
-  [{ text: "🚪 خروج از مدیریت", callback_data: "admin:logout" }]
+  [{ text: '📊 آمار', callback_data: 'admin:stats' }, { text: '👥 کاربران', callback_data: 'admin:users' }],
+  [{ text: '🎟 سهمیه‌ها', callback_data: 'admin:quota' }, { text: '🎫 تیکت‌ها', callback_data: 'admin:tickets' }],
+  [{ text: '📨 پیام همگانی', callback_data: 'admin:broadcast' }, { text: '✉️ پیام خصوصی', callback_data: 'admin:private' }],
+  [{ text: '🔌 وضعیت سرویس‌ها', callback_data: 'admin:status' }, { text: '⚙️ تنظیمات', callback_data: 'admin:settings' }],
+  [{ text: '🔘 روشن / خاموش ربات', callback_data: 'admin:toggle' }],
+  [{ text: '🚪 خروج', callback_data: 'admin:logout' }]
 ];
 
-const REPLY_KEYBOARD = {
-  keyboard: [[{ text: "🔄 شروع مجدد" }]],
-  resize_keyboard: true,
-  is_persistent: true
+const REPLY = {
+  keyboard: [[{ text: '🔄 شروع مجدد' }]],
+  resize_keyboard: true
 };
 
-function now() {
-  return new Date();
+function str(v) {
+  return v === undefined || v === null ? '' : String(v);
 }
 
-function dateKey() {
-  return now().toISOString().slice(0, 10);
+function clean(v, max = 3000) {
+  return str(v)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .slice(0, max);
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function dayKey() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function monthKey() {
-  return now().toISOString().slice(0, 7);
+  return new Date().toISOString().slice(0, 7);
 }
 
-function safeString(value) {
-  return value === undefined || value === null ? "" : String(value);
-}
-
-function shortText(value, max = 300) {
-  const text = safeString(value).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
-  return text.length > max ? text.slice(0, max - 1) + "…" : text;
-}
-
-function parseBody(body) {
-  if (!body) return {};
-  if (typeof body === "object") return body;
+function parseJson(v, fallback = null) {
   try {
-    return JSON.parse(body);
+    return JSON.parse(v);
   } catch {
-    return {};
+    return fallback;
   }
 }
 
-function getRequestUrl(req) {
-  try {
-    return new URL(req.url, CONFIG.APP_URL || "https://example.invalid");
-  } catch {
-    return new URL("https://example.invalid");
-  }
+function timingSafe(a, b) {
+  const x = Buffer.from(str(a));
+  const y = Buffer.from(str(b));
+
+  return x.length > 0 &&
+    x.length === y.length &&
+    crypto.timingSafeEqual(x, y);
 }
 
-function constantTimeEqual(a, b) {
-  const aa = Buffer.from(safeString(a));
-  const bb = Buffer.from(safeString(b));
-  if (aa.length !== bb.length || !aa.length) return false;
-  return crypto.timingSafeEqual(aa, bb);
+function validName(v) {
+  const s = clean(v, 80).trim().replace(/\s+/g, ' ');
+  return s.length >= 4 && s.split(' ').length >= 2;
 }
 
-function validFullName(name) {
-  const value = safeString(name).trim().replace(/\s+/g, " ");
-  return value.length >= 4 && value.length <= 80 && value.split(" ").length >= 2;
+function validUsername(v) {
+  return /^[a-zA-Z][a-zA-Z0-9_]{3,19}$/.test(str(v));
 }
 
-function validUsername(username) {
-  return /^[a-zA-Z][a-zA-Z0-9_]{3,19}$/.test(username);
-}
-
-function validPassword(password) {
-  return typeof password === "string" && password.length >= 8 && password.length <= 128;
+function validPassword(v) {
+  return typeof v === 'string' &&
+    v.length >= 8 &&
+    v.length <= 128;
 }
 
 function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return { salt, hash };
+  const salt = crypto.randomBytes(16).toString('hex');
+
+  return {
+    salt,
+    hash: crypto.scryptSync(password, salt, 64).toString('hex')
+  };
+}
+
+function verifyPassword(password, saved) {
+  if (!saved || !saved.salt || !saved.hash) return false;
+
+  const actual = crypto.scryptSync(password, saved.salt, 64);
+  const expected = Buffer.from(saved.hash, 'hex');
+
+  return actual.length === expected.length &&
+    crypto.timingSafeEqual(actual, expected);
+}
+
+function requestUrl(req) {
+  try {
+    return new URL(req.url, C.appUrl || 'https://invalid.local');
+  } catch {
+    return new URL('https://invalid.local');
+  }
+}
+
+function parseBody(body) {
+  if (body && typeof body === 'object') return body;
+  if (typeof body === 'string') return parseJson(body, {});
+  return {};
+}
+
+function sendJson(res, status, body) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(JSON.stringify(body));
 }
 
 async function redis(...args) {
-  if (!CONFIG.REDIS_URL || !CONFIG.REDIS_TOKEN) {
-    throw new Error("REDIS_NOT_CONFIGURED");
+  if (!C.redisUrl || !C.redisToken) {
+    throw new Error('REDIS_NOT_CONFIGURED');
   }
 
-  const response = await fetch(CONFIG.REDIS_URL, {
-    method: "POST",
+  const response = await fetch(C.redisUrl, {
+    method: 'POST',
     headers: {
-      Authorization: "Bearer " + CONFIG.REDIS_TOKEN,
-      "Content-Type": "application/json"
+      Authorization: `Bearer ${C.redisToken}`,
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify(args)
   });
@@ -166,77 +186,92 @@ async function redis(...args) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || data.error) {
-    console.error("REDIS_REQUEST_FAILED", response.status);
-    throw new Error("REDIS_REQUEST_FAILED");
+    console.error(
+      'REDIS_ERROR',
+      response.status,
+      clean(data.error, 300)
+    );
+
+    throw new Error('REDIS_REQUEST_FAILED');
   }
 
   return data.result;
 }
 
-async function getJson(key) {
-  const value = await redis("GET", key);
-  if (!value) return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
+async function get(key) {
+  return redis('GET', key);
 }
 
-async function setJson(key, value, ...options) {
-  return redis("SET", key, JSON.stringify(value), ...options);
+async function set(key, value, ...opts) {
+  return redis('SET', key, value, ...opts);
 }
 
-async function getState(id) {
-  return getJson(KEY.state(id));
+async function getObj(key) {
+  const v = await get(key);
+  return v ? parseJson(v) : null;
 }
 
-async function setState(id, state, seconds = 1800) {
-  return setJson(KEY.state(id), state, "EX", seconds);
-}
-
-async function clearState(id) {
-  return redis("DEL", KEY.state(id));
+async function setObj(key, value, ...opts) {
+  return set(key, JSON.stringify(value), ...opts);
 }
 
 async function getUser(id) {
-  return getJson(KEY.user(id));
+  return getObj(K.user(id));
 }
 
 async function saveUser(id, user) {
-  return setJson(KEY.user(id), user);
+  return setObj(K.user(id), user);
 }
 
-async function getBotEnabled() {
-  const value = await redis("GET", KEY.botEnabled);
-  return value !== "0";
+async function getState(id) {
+  return getObj(K.state(id));
 }
 
-async function sendBale(method, payload) {
-  if (!CONFIG.BALE_TOKEN) {
-    throw new Error("BALE_TOKEN_NOT_CONFIGURED");
+async function saveState(id, state, ttl = 1800) {
+  return setObj(K.state(id), state, 'EX', ttl);
+}
+
+async function clearState(id) {
+  return redis('DEL', K.state(id));
+}
+
+async function isBotEnabled() {
+  return (await get(K.botEnabled)) !== '0';
+}
+
+async function bale(method, payload) {
+  if (!C.baleToken) {
+    throw new Error('BALE_BOT_TOKEN_MISSING');
   }
 
-  const response = await fetch(BALE_API + "/" + method, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+  const response = await fetch(`${BALE_API}/${method}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
     body: JSON.stringify(payload)
   });
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || data.ok === false || data.error) {
-    console.error("BALE_API_ERROR", method, response.status);
-    throw new Error("BALE_API_REQUEST_FAILED");
+    console.error(
+      'BALE_API_ERROR',
+      method,
+      response.status,
+      clean(data.description || data.error, 250)
+    );
+
+    throw new Error('BALE_API_FAILED');
   }
 
   return data;
 }
 
-async function sendMessage(chatId, text, options = {}) {
+async function send(chatId, text, options = {}) {
   const payload = {
     chat_id: chatId,
-    text: safeString(text)
+    text: clean(text, 4000)
   };
 
   if (options.keyboard) {
@@ -244,264 +279,294 @@ async function sendMessage(chatId, text, options = {}) {
   }
 
   if (options.inline) {
-    payload.reply_markup = { inline_keyboard: options.inline };
+    payload.reply_markup = {
+      inline_keyboard: options.inline
+    };
   }
 
-  return sendBale("sendMessage", payload);
+  return bale('sendMessage', payload);
 }
 
-async function answerCallback(callbackId, text = "") {
-  if (!callbackId) return;
+async function answerCallback(id, text = '') {
+  if (!id) return;
+
   try {
-    await sendBale("answerCallbackQuery", {
-      callback_query_id: callbackId,
-      text: shortText(text, 180),
+    await bale('answerCallbackQuery', {
+      callback_query_id: id,
+      text: clean(text, 180),
       show_alert: false
     });
-  } catch {}
+  } catch (e) {
+    console.error('CALLBACK_ANSWER_FAILED', e.message);
+  }
 }
 
-async function mainMenuText(user) {
-  const firstName = safeString(user.name).split(/\s+/)[0] || "دوست عزیز";
-  return "سلام " + firstName + " عزیز! 🌟\n\n" +
-    "به چت جی‌بی‌تی خوش آمدی.\n" +
-    "می‌توانی سؤال بپرسی، متن بنویسی، ایده‌هایت را بررسی کنی و از هوش مصنوعی کمک بگیری.\n\n" +
-    "از منوی زیر بخش موردنظرت را انتخاب کن. 👇";
-}
+async function mainMenu(chatId, user) {
+  const first = clean(
+    str(user.name).split(/\s+/)[0] || 'دوست عزیز',
+    40
+  );
 
-async function showWelcome(chatId) {
-  await sendMessage(
+  return send(
     chatId,
-    "سلام! به چت جی‌بی‌تی خوش آمدی. 🌟\n\n" +
-    "یک دستیار هوشمند برای گفت‌وگو، یادگیری، نوشتن، ایده‌پردازی و پاسخ به پرسش‌ها.\n\n" +
-    "برای استفاده از امکانات ربات، ابتدا حساب کاربری بساز.\n\n" +
-    "از کجا شروع کنیم؟",
+    `سلام ${first} عزیز! 🌟\n\nبه چت‌جی‌بی‌تی خوش آمدی. از منوی زیر استفاده کن.`,
     {
-      keyboard: REPLY_KEYBOARD,
+      keyboard: REPLY,
+      inline: MENU
+    }
+  );
+}
+
+async function welcome(chatId) {
+  return send(
+    chatId,
+    'سلام! به چت‌جی‌بی‌تی خوش آمدی. 🌟\n\nبرای استفاده از ربات ابتدا حساب کاربری بساز.',
+    {
+      keyboard: REPLY,
       inline: [
+        [{ text: '📝 ثبت‌نام', callback_data: 'register' }],
         [
-          { text: "📝 ثبت‌نام", callback_data: "register" },
-          { text: "📖 راهنما", callback_data: "help" }
-        ],
-        [{ text: "ℹ️ درباره ربات", callback_data: "about" }]
+          { text: '📖 راهنما', callback_data: 'help' },
+          { text: 'ℹ️ درباره', callback_data: 'about' }
+        ]
       ]
     }
   );
 }
 
-async function showMainMenu(chatId, user) {
-  await sendMessage(chatId, await mainMenuText(user), {
-    keyboard: REPLY_KEYBOARD,
-    inline: MAIN_MENU
-  });
-}
-
-async function startCommand(chatId) {
+async function start(chatId) {
   const user = await getUser(chatId);
-  if (user && user.status === "active") {
-    return showMainMenu(chatId, user);
+
+  if (user && user.status === 'active') {
+    return mainMenu(chatId, user);
   }
-  return showWelcome(chatId);
+
+  if (user && user.status === 'blocked') {
+    return send(
+      chatId,
+      'حساب کاربری تو مسدود شده است. برای پیگیری با پشتیبانی تماس بگیر.'
+    );
+  }
+
+  return welcome(chatId);
 }
 
-async function showHelp(chatId) {
-  await sendMessage(
-    chatId,
-    "📖 راهنمای استفاده از چت جی‌بی‌تی\n\n" +
-    "💬 گفت‌وگوی جدید: شروع یک گفت‌وگوی تازه.\n" +
-    "📚 تاریخچه: مشاهدهٔ گفتگوهای قبلی.\n" +
-    "👤 حساب کاربری: مشاهدهٔ اطلاعات حساب و سهمیه.\n" +
-    "🎧 پشتیبانی: ارسال پیام به تیم پشتیبانی.\n\n" +
-    "سؤالت را واضح و کامل بنویس تا پاسخ دقیق‌تری دریافت کنی.\n\n" +
-    "پاسخ هوش مصنوعی ممکن است اشتباه باشد؛ اطلاعات مهم را بررسی کن.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "🏠 منوی اصلی", callback_data: "main" }]]
-    }
-  );
-}
+async function requireActive(chatId) {
+  const user = await getUser(chatId);
 
-async function showAbout(chatId) {
-  await sendMessage(
-    chatId,
-    "ℹ️ درباره چت جی‌بی‌تی\n\n" +
-    "چت جی‌بی‌تی یک ربات گفت‌وگوی هوشمند در پیام‌رسان بله است.\n\n" +
-    "✨ امکانات:\n" +
-    "• گفت‌وگو با هوش مصنوعی\n" +
-    "• تاریخچه گفتگوها\n" +
-    "• حساب کاربری و سهمیه مصرف\n" +
-    "• پشتیبانی از طریق ثبت تیکت",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "🏠 منوی اصلی", callback_data: "main" }]]
-    }
-  );
+  if (!user || user.status !== 'active') {
+    await send(
+      chatId,
+      'برای استفاده از این بخش ابتدا ثبت‌نام کن.',
+      {
+        keyboard: REPLY,
+        inline: [
+          [{ text: '📝 ثبت‌نام', callback_data: 'register' }]
+        ]
+      }
+    );
+
+    return null;
+  }
+
+  user.lastActiveAt = nowIso();
+  await saveUser(chatId, user);
+
+  return user;
 }
 
 async function beginRegistration(chatId) {
   const existing = await getUser(chatId);
 
-  if (existing && existing.status === "active") {
-    await sendMessage(
-      chatId,
-      "حساب کاربری تو از قبل ساخته شده است. نیازی به ثبت‌نام دوباره نیست. ✅",
-      {
-        keyboard: REPLY_KEYBOARD,
-        inline: [[{ text: "🏠 منوی اصلی", callback_data: "main" }]]
-      }
-    );
-    return;
+  if (existing && existing.status === 'active') {
+    return mainMenu(chatId, existing);
   }
 
-  await setState(chatId, {
-    flow: "registration",
-    step: "name",
+  await saveState(chatId, {
+    flow: 'register',
+    step: 'name',
     data: {}
   });
 
-  await sendMessage(
+  return send(
     chatId,
-    "📝 ثبت‌نام در چت جی‌بی‌تی\n\n" +
-    "مرحله ۱ از ۴\n" +
-    "لطفاً نام و نام خانوادگی خود را وارد کن.\n\n" +
-    "برای انصراف، «لغو» را بفرست."
+    '📝 ثبت‌نام\n\nمرحله ۱ از ۵\nنام و نام خانوادگی را وارد کن.\nبرای لغو، «لغو» را بفرست.'
   );
 }
 
 async function releaseUsername(username, chatId) {
   if (!username) return;
-  const key = KEY.username(username);
-  const current = await redis("GET", key).catch(() => null);
-  if (current === "pending:" + chatId) {
-    await redis("DEL", key).catch(() => null);
-  }
+
+  const key = K.username(username);
+
+  const script =
+    "if redis.call('GET',KEYS[1])==ARGV[1] then " +
+    "return redis.call('DEL',KEYS[1]) else return 0 end";
+
+  await redis(
+    'EVAL',
+    script,
+    1,
+    key,
+    `pending:${chatId}`
+  );
 }
 
-async function cancelRegistration(chatId, state) {
-  if (state?.data?.username) {
-    await releaseUsername(state.data.username, chatId);
+async function cancelFlow(chatId, state) {
+  if (
+    state?.flow === 'register' &&
+    state.data?.username
+  ) {
+    await releaseUsername(
+      state.data.username,
+      chatId
+    ).catch(() => {});
   }
 
   await clearState(chatId);
+
   const user = await getUser(chatId);
 
-  if (user && user.status === "active") {
-    await sendMessage(
-      chatId,
-      "عملیات لغو شد. حساب کاربری و تاریخچه‌ات محفوظ است. ✅",
-      {
-        keyboard: REPLY_KEYBOARD,
-        inline: MAIN_MENU
-      }
-    );
-  } else {
-    await sendMessage(
-      chatId,
-      "ثبت‌نام لغو شد. هر زمان آماده بودی، می‌توانی دوباره شروع کنی.",
-      {
-        keyboard: REPLY_KEYBOARD,
-        inline: [[{ text: "📝 شروع ثبت‌نام", callback_data: "register" }]]
-      }
-    );
+  if (user?.status === 'active') {
+    return mainMenu(chatId, user);
   }
+
+  return welcome(chatId);
 }
 
-async function handleRegistration(chatId, text, state) {
-  const data = state.data || {};
+async function registrationStep(chatId, text, state) {
+  const d = state.data || {};
 
-  if (state.step === "name") {
-    const name = safeString(text).trim().replace(/\s+/g, " ");
+  if (state.step === 'name') {
+    const name = clean(text, 80)
+      .trim()
+      .replace(/\s+/g, ' ');
 
-    if (!validFullName(name)) {
-      await sendMessage(chatId, "لطفاً نام و نام خانوادگی را کامل وارد کن؛ مثلاً «علی رضایی».");
-      return;
+    if (!validName(name)) {
+      return send(
+        chatId,
+        'نام و نام خانوادگی کامل وارد کن؛ مثال: علی رضایی.'
+      );
     }
 
-    data.name = name;
+    d.name = name;
 
-    await setState(chatId, {
-      flow: "registration",
-      step: "username",
-      data
+    await saveState(chatId, {
+      flow: 'register',
+      step: 'username',
+      data: d
     });
 
-    await sendMessage(
+    return send(
       chatId,
-      "مرحله ۲ از ۴\n" +
-      "یک نام کاربری انگلیسی انتخاب کن.\n\n" +
-      "• با حرف انگلیسی شروع شود.\n" +
-      "• فقط حروف انگلیسی، عدد و زیرخط مجاز است.\n" +
-      "• بین ۴ تا ۲۰ نویسه باشد.\n\n" +
-      "مثال: ali_reza24"
+      'مرحله ۲ از ۵\nنام کاربری انگلیسی ۴ تا ۲۰ نویسه‌ای انتخاب کن. فقط حروف انگلیسی، عدد و زیرخط مجاز است.'
     );
-    return;
   }
 
-  if (state.step === "username") {
-    const username = safeString(text).trim().replace(/^@/, "");
+  if (state.step === 'username') {
+    const username = clean(text, 30)
+      .trim()
+      .replace(/^@/, '');
 
     if (!validUsername(username)) {
-      await sendMessage(chatId, "نام کاربری معتبر نیست. یک نام انگلیسی با ۴ تا ۲۰ نویسه وارد کن.");
-      return;
+      return send(
+        chatId,
+        'نام کاربری معتبر نیست. با حرف انگلیسی شروع شود و ۴ تا ۲۰ نویسه داشته باشد.'
+      );
     }
 
-    const userKey = KEY.username(username);
-    const existing = await redis("GET", userKey);
+    const key = K.username(username);
 
-    if (existing && existing !== "pending:" + chatId && existing !== String(chatId)) {
-      await sendMessage(chatId, "این نام کاربری قبلاً انتخاب شده است. لطفاً نام دیگری وارد کن.");
-      return;
+    const reserved = await redis(
+      'SET',
+      key,
+      `pending:${chatId}`,
+      'EX',
+      1800,
+      'NX'
+    );
+
+    if (reserved !== 'OK') {
+      const owner = await get(key);
+
+      if (
+        owner !== `pending:${chatId}` &&
+        owner !== String(chatId)
+      ) {
+        return send(
+          chatId,
+          'این نام کاربری قبلاً انتخاب شده است. نام دیگری وارد کن.'
+        );
+      }
     }
 
-    const reservation = await redis("SET", userKey, "pending:" + chatId, "EX", 1800, "NX");
+    d.username = username;
 
-    if (reservation !== "OK" && existing !== "pending:" + chatId && existing !== String(chatId)) {
-      await sendMessage(chatId, "این نام کاربری در حال استفاده است. لطفاً نام دیگری انتخاب کن.");
-      return;
-    }
-
-    data.username = username;
-
-    await setState(chatId, {
-      flow: "registration",
-      step: "password",
-      data
+    await saveState(chatId, {
+      flow: 'register',
+      step: 'password',
+      data: d
     });
 
-    await sendMessage(
+    return send(
       chatId,
-      "مرحله ۳ از ۴\n" +
-      "یک رمز عبور انتخاب کن.\n\n" +
-      "رمز باید حداقل ۸ نویسه داشته باشد."
+      'مرحله ۳ از ۵\nرمز عبور انتخاب کن. رمز باید حداقل ۸ نویسه داشته باشد.'
     );
-    return;
   }
 
-  if (state.step === "password") {
+  if (state.step === 'password') {
     if (!validPassword(text)) {
-      await sendMessage(chatId, "رمز عبور باید حداقل ۸ و حداکثر ۱۲۸ نویسه داشته باشد.");
-      return;
+      return send(
+        chatId,
+        'رمز باید حداقل ۸ و حداکثر ۱۲۸ نویسه داشته باشد.'
+      );
     }
 
-    data.password = hashPassword(text);
+    d.password = hashPassword(text);
 
-    await setState(chatId, {
-      flow: "registration",
-      step: "confirm",
-      data
+    await saveState(chatId, {
+      flow: 'register',
+      step: 'confirm_password',
+      data: d
     });
 
-    await sendMessage(
+    return send(
       chatId,
-      "مرحله ۴ از ۴ — تأیید اطلاعات\n\n" +
-      "👤 نام: " + data.name + "\n" +
-      "🔑 نام کاربری: @" + data.username + "\n" +
-      "🔒 رمز عبور: به‌صورت هش ذخیره می‌شود\n\n" +
-      "اگر اطلاعات درست است، ثبت‌نام را نهایی کن.",
+      'مرحله ۴ از ۵\nرمز عبور را دوباره وارد کن تا تأیید شود.'
+    );
+  }
+
+  if (state.step === 'confirm_password') {
+    if (!verifyPassword(text, d.password)) {
+      return send(
+        chatId,
+        'دو رمز یکسان نیستند. دوباره رمز را وارد کن.'
+      );
+    }
+
+    await saveState(chatId, {
+      flow: 'register',
+      step: 'final',
+      data: d
+    });
+
+    return send(
+      chatId,
+      `مرحله ۵ از ۵ — تأیید نهایی\n\nنام: ${d.name}\nنام کاربری: @${d.username}\nرمز عبور: به‌صورت امن و هش‌شده ذخیره می‌شود.\n\nبرای ساخت حساب، دکمه تأیید را بزن.`,
       {
         inline: [
-          [{ text: "✅ تأیید و ساخت حساب", callback_data: "confirm_reg" }],
-          [{ text: "❌ لغو ثبت‌نام", callback_data: "cancel_reg" }]
+          [
+            {
+              text: '✅ تأیید و ساخت حساب',
+              callback_data: 'reg:confirm'
+            }
+          ],
+          [
+            {
+              text: '❌ لغو',
+              callback_data: 'reg:cancel'
+            }
+          ]
         ]
       }
     );
@@ -511,140 +576,155 @@ async function handleRegistration(chatId, text, state) {
 async function finishRegistration(chatId) {
   const state = await getState(chatId);
 
-  if (!state || state.flow !== "registration" || state.step !== "confirm") {
-    await sendMessage(chatId, "مرحله ثبت‌نام پیدا نشد. لطفاً از ابتدا شروع کن.");
-    return;
+  if (
+    !state ||
+    state.flow !== 'register' ||
+    state.step !== 'final'
+  ) {
+    return send(
+      chatId,
+      'اطلاعات ثبت‌نام پیدا نشد. دوباره شروع کن.'
+    );
   }
 
-  const data = state.data || {};
+  const d = state.data || {};
 
-  if (!data.name || !data.username || !data.password) {
-    await clearState(chatId);
-    await sendMessage(chatId, "اطلاعات ثبت‌نام کامل نیست. لطفاً دوباره ثبت‌نام کن.");
-    return;
+  if (
+    !d.name ||
+    !d.username ||
+    !d.password?.salt ||
+    !d.password?.hash
+  ) {
+    return send(
+      chatId,
+      'اطلاعات ثبت‌نام ناقص است. دوباره ثبت‌نام کن.'
+    );
   }
 
-  const userKey = KEY.username(data.username);
-  const reserved = await redis("GET", userKey);
+  const script =
+    "local v=redis.call('GET',KEYS[1]); " +
+    "if v and v~=ARGV[1] and v~=ARGV[2] then return 0 end; " +
+    "redis.call('SET',KEYS[1],ARGV[2]); " +
+    "redis.call('SADD',KEYS[2],ARGV[2]); " +
+    "return 1";
 
-  if (reserved && reserved !== "pending:" + chatId && reserved !== String(chatId)) {
+  const ok = await redis(
+    'EVAL',
+    script,
+    2,
+    K.username(d.username),
+    K.users,
+    `pending:${chatId}`,
+    String(chatId)
+  );
+
+  if (Number(ok) !== 1) {
     await clearState(chatId);
-    await sendMessage(chatId, "این نام کاربری دیگر در دسترس نیست. ثبت‌نام را دوباره انجام بده.");
-    return;
+
+    return send(
+      chatId,
+      'این نام کاربری دیگر در دسترس نیست. دوباره ثبت‌نام کن.'
+    );
   }
 
   const user = {
     id: String(chatId),
-    name: data.name,
-    username: data.username,
-    password: data.password,
-    status: "active",
-    createdAt: now().toISOString(),
-    lastActiveAt: now().toISOString()
+    name: d.name,
+    username: d.username,
+    password: d.password,
+    status: 'active',
+    createdAt: nowIso(),
+    lastActiveAt: nowIso()
   };
 
   await saveUser(chatId, user);
-  await redis("SET", userKey, String(chatId));
-  await redis("SADD", KEY.users, String(chatId));
   await clearState(chatId);
-  await redis("DEL", KEY.context(chatId));
+  await redis('DEL', K.context(chatId));
 
-  await sendMessage(
-    chatId,
-    "🎉 ثبت‌نام با موفقیت انجام شد!\n\n" +
-    "حساب کاربری تو آماده است. اطلاعات ورودت را محرمانه نگه دار.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: MAIN_MENU
-    }
+  return mainMenu(chatId, user);
+}
+
+async function quotaLimits(chatId) {
+  const [
+    globalDay,
+    globalMonth,
+    personalDay,
+    personalMonth
+  ] = await Promise.all([
+    get(K.dailyConfig),
+    get(K.monthlyConfig),
+    get(K.userDay(chatId)),
+    get(K.userMonth(chatId))
+  ]);
+
+  const d = Number(
+    personalDay !== null
+      ? personalDay
+      : (globalDay !== null ? globalDay : C.dailyQuota)
   );
+
+  const m = Number(
+    personalMonth !== null
+      ? personalMonth
+      : (globalMonth !== null ? globalMonth : C.monthlyQuota)
+  );
+
+  return {
+    daily: Number.isFinite(d) && d >= 0
+      ? d
+      : C.dailyQuota,
+    monthly: Number.isFinite(m) && m >= 0
+      ? m
+      : C.monthlyQuota
+  };
 }
 
-async function requireUser(chatId) {
-  const user = await getUser(chatId);
+async function usage(chatId) {
+  const [d, m, limits] = await Promise.all([
+    get(K.day(chatId, dayKey())),
+    get(K.month(chatId, monthKey())),
+    quotaLimits(chatId)
+  ]);
 
-  if (!user || user.status !== "active") {
-    await sendMessage(
-      chatId,
-      "برای استفاده از این بخش، ابتدا باید حساب کاربری بسازی. 📝",
-      {
-        keyboard: REPLY_KEYBOARD,
-        inline: [[{ text: "📝 ثبت‌نام", callback_data: "register" }]]
-      }
-    );
-    return null;
-  }
-
-  user.lastActiveAt = now().toISOString();
-  await saveUser(chatId, user);
-  return user;
-}
-
-async function getQuotaLimit(kind) {
-  const key = kind === "daily" ? KEY.configDaily : KEY.configMonthly;
-  const fallback = kind === "daily" ? CONFIG.DAILY_QUOTA : CONFIG.MONTHLY_QUOTA;
-  const saved = await redis("GET", key);
-  const value = Number(saved);
-
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-async function getEffectiveQuota(chatId, kind) {
-  const userKey = kind === "daily"
-    ? KEY.userDailyQuota(chatId)
-    : KEY.userMonthlyQuota(chatId);
-
-  const personal = await redis("GET", userKey);
-
-  if (personal !== null && personal !== "") {
-    const value = Number(personal);
-    if (Number.isFinite(value) && value >= 0) return value;
-  }
-
-  return getQuotaLimit(kind);
-}
-
-async function getQuotaUsage(chatId) {
-  const day = Number((await redis("GET", KEY.quotaDay(chatId, dateKey()))) || 0);
-  const month = Number((await redis("GET", KEY.quotaMonth(chatId, monthKey()))) || 0);
-  const dailyLimit = await getEffectiveQuota(chatId, "daily");
-  const monthlyLimit = await getEffectiveQuota(chatId, "monthly");
+  const day = Number(d || 0);
+  const month = Number(m || 0);
 
   return {
     day,
     month,
-    dailyLimit,
-    monthlyLimit,
-    dailyLeft: Math.max(0, dailyLimit - day),
-    monthlyLeft: Math.max(0, monthlyLimit - month)
+    ...limits,
+    dailyLeft: Math.max(0, limits.daily - day),
+    monthlyLeft: Math.max(0, limits.monthly - month)
   };
 }
 
 async function consumeQuota(chatId) {
-  const day = KEY.quotaDay(chatId, dateKey());
-  const month = KEY.quotaMonth(chatId, monthKey());
-  const dailyLimit = await getEffectiveQuota(chatId, "daily");
-  const monthlyLimit = await getEffectiveQuota(chatId, "monthly");
+  const limits = await quotaLimits(chatId);
 
-  const script = `
-    local d = tonumber(redis.call("GET", KEYS[1]) or "0")
-    local m = tonumber(redis.call("GET", KEYS[2]) or "0")
-    local dl = tonumber(ARGV[1])
-    local ml = tonumber(ARGV[2])
+  const kd = K.day(chatId, dayKey());
+  const km = K.month(chatId, monthKey());
 
-    if d >= dl then return {0, d, m} end
-    if m >= ml then return {0, d, m} end
+  const script =
+    "local d=tonumber(redis.call('GET',KEYS[1]) or '0'); " +
+    "local m=tonumber(redis.call('GET',KEYS[2]) or '0'); " +
+    "local dl=tonumber(ARGV[1]); " +
+    "local ml=tonumber(ARGV[2]); " +
+    "if d>=dl or m>=ml then return {0,d,m} end; " +
+    "d=redis.call('INCR',KEYS[1]); " +
+    "m=redis.call('INCR',KEYS[2]); " +
+    "redis.call('EXPIRE',KEYS[1],172800); " +
+    "redis.call('EXPIRE',KEYS[2],3456000); " +
+    "return {1,d,m}";
 
-    d = redis.call("INCR", KEYS[1])
-    m = redis.call("INCR", KEYS[2])
-
-    redis.call("EXPIRE", KEYS[1], 172800)
-    redis.call("EXPIRE", KEYS[2], 3456000)
-
-    return {1, d, m}
-  `;
-
-  const result = await redis("EVAL", script, 2, day, month, dailyLimit, monthlyLimit);
+  const result = await redis(
+    'EVAL',
+    script,
+    2,
+    kd,
+    km,
+    limits.daily,
+    limits.monthly
+  );
 
   return {
     allowed: Number(result?.[0]) === 1,
@@ -654,99 +734,151 @@ async function consumeQuota(chatId) {
 }
 
 async function refundQuota(chatId) {
-  const day = KEY.quotaDay(chatId, dateKey());
-  const month = KEY.quotaMonth(chatId, monthKey());
+  const script =
+    "for i=1,2 do " +
+    "local v=tonumber(redis.call('GET',KEYS[i]) or '0'); " +
+    "if v>0 then redis.call('DECR',KEYS[i]) end; " +
+    "end; return 1";
 
-  const script = `
-    local d = tonumber(redis.call("GET", KEYS[1]) or "0")
-    local m = tonumber(redis.call("GET", KEYS[2]) or "0")
-    if d > 0 then redis.call("DECR", KEYS[1]) end
-    if m > 0 then redis.call("DECR", KEYS[2]) end
-    return 1
-  `;
-
-  await redis("EVAL", script, 2, day, month);
+  return redis(
+    'EVAL',
+    script,
+    2,
+    K.day(chatId, dayKey()),
+    K.month(chatId, monthKey())
+  );
 }
 
-function isPoliticalRequest(text) {
-  try {
-    return new RegExp(CONFIG.POLITICAL_KEYWORDS, "i").test(safeString(text));
-  } catch {
-    return false;
-  }
+async function aiRateAllowed(chatId) {
+  const script =
+    "local n=redis.call('INCR',KEYS[1]); " +
+    "if n==1 then redis.call('EXPIRE',KEYS[1],60) end; " +
+    "return n";
+
+  const n = Number(
+    await redis('EVAL', script, 1, K.aiRate(chatId))
+  );
+
+  return n <= 8;
+}
+
+function isPolitical(text) {
+  const terms = C.politicalKeywords
+    .split('|')
+    .map(x => x.trim())
+    .filter(Boolean);
+
+  return terms.some(term =>
+    term && text.toLowerCase().includes(term.toLowerCase())
+  );
 }
 
 async function getContext(chatId) {
-  const context = await getJson(KEY.context(chatId));
-  return Array.isArray(context) ? context : [];
+  return (await getObj(K.context(chatId))) || [];
 }
 
 async function saveContext(chatId, context) {
-  return setJson(KEY.context(chatId), context.slice(-12));
+  return setObj(
+    K.context(chatId),
+    context.slice(-12),
+    'EX',
+    60 * 60 * 24 * 30
+  );
 }
 
 async function saveHistory(chatId, userText, assistantText) {
-  const record = {
-    time: now().toISOString(),
-    user: shortText(userText, 2000),
-    assistant: shortText(assistantText, 3000)
+  const item = {
+    at: nowIso(),
+    user: clean(userText, 3000),
+    assistant: clean(assistantText, 3500)
   };
 
-  await redis("LPUSH", KEY.history(chatId), JSON.stringify(record));
-  await redis("LTRIM", KEY.history(chatId), 0, 49);
+  await redis(
+    'LPUSH',
+    K.history(chatId),
+    JSON.stringify(item)
+  );
+
+  await redis(
+    'LTRIM',
+    K.history(chatId),
+    0,
+    49
+  );
 }
 
 async function callAI(chatId, userText) {
-  if (!CONFIG.OPENAI_KEY) {
-    throw new Error("OPENAI_KEY_NOT_CONFIGURED");
+  if (!C.aiKey || !C.aiModel) {
+    throw new Error('AI_CONFIGURATION_MISSING');
   }
 
   const context = await getContext(chatId);
 
   const messages = [
     {
-      role: "system",
-      content: "تو یک دستیار فارسی‌زبان دقیق، محترمانه و مفید هستی. پاسخ را متناسب با سؤال کاربر بده. اگر چیزی را نمی‌دانی، صادقانه بگو. اطلاعات ساختگی را به‌عنوان واقعیت ارائه نکن. پاسخ‌ها را روشن و منظم بنویس. اگر کاربر فارسی می‌نویسد، فارسی پاسخ بده."
+      role: 'system',
+      content: 'تو یک دستیار هوشمند فارسی‌زبان هستی. پاسخ‌ها دقیق، محترمانه، روشن و متناسب با سن مخاطب باشند. اگر پاسخ را نمی‌دانی، صریح بگو.'
     },
     ...context,
-    { role: "user", content: userText }
+    {
+      role: 'user',
+      content: clean(userText, 6000)
+    }
   ];
 
-  const response = await fetch(CONFIG.AI_BASE_URL + "/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer " + CONFIG.OPENAI_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: CONFIG.OPENAI_MODEL,
-      messages,
-      temperature: 0.7
-    })
-  });
+  const response = await fetch(
+    `${C.aiBase}/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${C.aiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: C.aiModel,
+        messages,
+        temperature: 0.7
+      }),
+      signal: AbortSignal.timeout(25000)
+    }
+  );
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    console.error("AI_REQUEST_FAILED", response.status, data.error?.type || "unknown");
+    console.error(
+      'GAPGPT_ERROR',
+      response.status,
+      clean(
+        data.error?.message ||
+        data.message ||
+        data.error,
+        500
+      )
+    );
 
-    if (response.status === 401) throw new Error("OPENAI_AUTH_ERROR");
-    if (response.status === 429) throw new Error("OPENAI_QUOTA_ERROR");
-
-    throw new Error("OPENAI_REQUEST_ERROR");
+    const e = new Error('AI_PROVIDER_ERROR');
+    e.status = response.status;
+    throw e;
   }
 
-  const answer = data.choices?.[0]?.message?.content;
+  const answer = data?.choices?.[0]?.message?.content;
 
-  if (!answer || typeof answer !== "string") {
-    throw new Error("OPENAI_EMPTY_RESPONSE");
+  if (typeof answer !== 'string' || !answer.trim()) {
+    throw new Error('AI_EMPTY_RESPONSE');
   }
 
   const updated = [
     ...context,
-    { role: "user", content: userText },
-    { role: "assistant", content: answer }
-  ];
+    {
+      role: 'user',
+      content: clean(userText, 6000)
+    },
+    {
+      role: 'assistant',
+      content: answer
+    }
+  ].slice(-12);
 
   await saveContext(chatId, updated);
   await saveHistory(chatId, userText, answer);
@@ -754,1521 +886,1804 @@ async function callAI(chatId, userText) {
   return answer;
 }
 
-async function handleAIChat(chatId, text) {
-  const user = await requireUser(chatId);
-  if (!user) return;
-
-  const userText = safeString(text).trim();
-
-  if (!userText) {
-    await sendMessage(chatId, "پیامت خالی است. لطفاً سؤال یا درخواستت را بنویس.");
-    return;
+async function aiChat(chatId, text) {
+  if (!text.trim()) {
+    return send(chatId, 'پیامت خالی است. یک سؤال بنویس.');
   }
 
-  if (userText.length > 6000) {
-    await sendMessage(chatId, "پیامت خیلی طولانی است. لطفاً آن را کوتاه‌تر کن و دوباره بفرست.");
-    return;
-  }
-
-  if (isPoliticalRequest(userText)) {
-    await sendMessage(
+  if (isPolitical(text)) {
+    return send(
       chatId,
-      "متأسفم، طبق تنظیمات فعلی این ربات، درخواست‌های سیاسی پردازش نمی‌شوند.\n\n" +
-      "می‌توانی سؤال دیگری درباره یادگیری، نوشتن، فناوری، علوم یا موضوعات عمومی مطرح کنی."
+      'این ربات برای گفت‌وگوی عمومی و آموزشی طراحی شده است و به درخواست‌های تبلیغاتی یا جهت‌دهی سیاسی پاسخ نمی‌دهد.'
     );
-    return;
   }
 
-  const quota = await getQuotaUsage(chatId);
+  const lock = crypto.randomBytes(16).toString('hex');
 
-  if (quota.dailyLeft <= 0 || quota.monthlyLeft <= 0) {
-    await sendMessage(
+  const locked = await set(
+    K.aiLock(chatId),
+    lock,
+    'EX',
+    90,
+    'NX'
+  );
+
+  if (locked !== 'OK') {
+    return send(
       chatId,
-      "⏳ سهمیه استفاده از هوش مصنوعی به پایان رسیده است.\n\n" +
-      "سهمیه روزانه باقی‌مانده: " + quota.dailyLeft + "\n" +
-      "سهمیه ماهانه باقی‌مانده: " + quota.monthlyLeft
+      'یک درخواست دیگر در حال پردازش است. کمی صبر کن و دوباره بفرست.'
     );
-    return;
   }
 
-  const consumed = await consumeQuota(chatId);
-
-  if (!consumed.allowed) {
-    await sendMessage(chatId, "⏳ سهمیه استفاده از هوش مصنوعی به پایان رسیده است.");
-    return;
-  }
-
-  await sendMessage(chatId, "⏳ درخواستت دریافت شد؛ دارم آن را بررسی می‌کنم…");
+  let charged = false;
 
   try {
-    const answer = await callAI(chatId, userText);
-    const latestQuota = await getQuotaUsage(chatId);
-
-    await sendMessage(
-      chatId,
-      answer + "\n\n" +
-      "━━━━━━━━━━━━━━\n" +
-      "📊 سهمیه باقی‌مانده امروز: " + latestQuota.dailyLeft + "\n" +
-      "📅 سهمیه باقی‌مانده این ماه: " + latestQuota.monthlyLeft,
-      { keyboard: REPLY_KEYBOARD }
-    );
-  } catch (error) {
-    await refundQuota(chatId);
-    console.error("AI_CHAT_FAILED", error.message);
-
-    let message = "متأسفانه درخواست کامل نشد. کمی بعد دوباره تلاش کن.";
-
-    if (error.message === "OPENAI_KEY_NOT_CONFIGURED") {
-      message = "سرویس هوش مصنوعی پیکربندی نشده است. مدیر باید OPENAI_API_KEY را در Vercel تنظیم کند.";
-    } else if (error.message === "OPENAI_AUTH_ERROR") {
-      message = "کلید API معتبر نیست یا سرویس آن را نپذیرفته است. مدیر باید تنظیمات API را بررسی کند.";
-    } else if (error.message === "OPENAI_QUOTA_ERROR") {
-      message = "سرویس API درخواست را نپذیرفت؛ ممکن است اعتبار یا محدودیت درخواست مشکل داشته باشد.";
+    if (!(await aiRateAllowed(chatId))) {
+      return send(
+        chatId,
+        'تعداد درخواست‌ها در این دقیقه زیاد است. کمی بعد دوباره تلاش کن.'
+      );
     }
 
-    await sendMessage(chatId, message, { keyboard: REPLY_KEYBOARD });
+    const quota = await consumeQuota(chatId);
+
+    if (!quota.allowed) {
+      const u = await usage(chatId);
+
+      return send(
+        chatId,
+        `سهمیه‌ات تمام شده است.\nمصرف امروز: ${u.day}/${u.daily}\nمصرف ماه: ${u.month}/${u.monthly}`
+      );
+    }
+
+    charged = true;
+
+    await send(chatId, '⏳ در حال دریافت پاسخ...');
+
+    const answer = await callAI(chatId, text);
+
+    await send(
+      chatId,
+      answer,
+      { keyboard: REPLY }
+    );
+  } catch (e) {
+    if (charged) {
+      await refundQuota(chatId).catch(() => {});
+    }
+
+    console.error(
+      'AI_CHAT_FAILED',
+      e.message,
+      e.status || ''
+    );
+
+    if (e.status === 401 || e.status === 403) {
+      return send(
+        chatId,
+        'اتصال هوش مصنوعی مجاز نیست. کلید API را در تنظیمات Vercel بررسی کن.'
+      );
+    }
+
+    if (e.status === 429) {
+      return send(
+        chatId,
+        'سرویس هوش مصنوعی فعلاً محدودیت درخواست دارد. کمی بعد دوباره تلاش کن.'
+      );
+    }
+
+    if (e.status >= 500) {
+      return send(
+        chatId,
+        'سرویس هوش مصنوعی موقتاً پاسخ‌گو نیست. کمی بعد دوباره تلاش کن.'
+      );
+    }
+
+    return send(
+      chatId,
+      'در دریافت پاسخ مشکلی پیش آمد. تنظیمات API و گزارش خطای Vercel را بررسی کن.'
+    );
+  } finally {
+    const script =
+      "if redis.call('GET',KEYS[1])==ARGV[1] then " +
+      "return redis.call('DEL',KEYS[1]) else return 0 end";
+
+    await redis(
+      'EVAL',
+      script,
+      1,
+      K.aiLock(chatId),
+      lock
+    ).catch(() => {});
   }
 }
 
 async function showHistory(chatId) {
-  const user = await requireUser(chatId);
-  if (!user) return;
+  if (!(await requireActive(chatId))) return;
 
-  const records = await redis("LRANGE", KEY.history(chatId), 0, 9);
+  const rows = await redis(
+    'LRANGE',
+    K.history(chatId),
+    0,
+    9
+  );
 
-  if (!Array.isArray(records) || records.length === 0) {
-    await sendMessage(
+  if (!Array.isArray(rows) || !rows.length) {
+    return send(
       chatId,
-      "📚 هنوز گفت‌وگویی در تاریخچه ثبت نشده است.",
+      'هنوز گفت‌وگویی در تاریخچه ثبت نشده است.',
       {
-        keyboard: REPLY_KEYBOARD,
-        inline: [[{ text: "💬 شروع گفت‌وگوی جدید", callback_data: "newchat" }]]
+        keyboard: REPLY,
+        inline: [
+          [{ text: '🏠 منوی اصلی', callback_data: 'main' }]
+        ]
       }
     );
-    return;
   }
 
-  const lines = ["📚 تاریخچه گفت‌وگوهای اخیر", ""];
+  const text = rows.map((raw, i) => {
+    const x = parseJson(raw, {});
 
-  for (let i = 0; i < records.length; i++) {
-    try {
-      const item = JSON.parse(records[i]);
-      const date = new Date(item.time).toLocaleString("fa-IR", {
-        timeZone: "Asia/Tehran"
-      });
+    return `${i + 1}) ${clean(x.user, 180)}\nپاسخ: ${clean(x.assistant, 220)}`;
+  }).join('\n\n──────────\n\n');
 
-      lines.push(
-        (i + 1) + ". 🕒 " + date,
-        "🧑 درخواست: " + shortText(item.user, 170),
-        "🤖 پاسخ: " + shortText(item.assistant, 220),
-        ""
-      );
-    } catch {}
-  }
-
-  await sendMessage(chatId, lines.join("\n"), {
-    keyboard: REPLY_KEYBOARD,
-    inline: [
-      [{ text: "💬 گفت‌وگوی جدید", callback_data: "newchat" }],
-      [{ text: "🏠 منوی اصلی", callback_data: "main" }]
-    ]
-  });
+  return send(
+    chatId,
+    `📚 ده گفت‌وگوی اخیر\n\n${text}`,
+    {
+      keyboard: REPLY,
+      inline: [
+        [{ text: '🏠 منوی اصلی', callback_data: 'main' }]
+      ]
+    }
+  );
 }
 
 async function showAccount(chatId) {
-  const user = await requireUser(chatId);
+  const user = await requireActive(chatId);
   if (!user) return;
 
-  const quota = await getQuotaUsage(chatId);
+  const u = await usage(chatId);
 
-  await sendMessage(
+  return send(
     chatId,
-    "👤 حساب کاربری تو\n\n" +
-    "نام: " + user.name + "\n" +
-    "نام کاربری: @" + user.username + "\n" +
-    "شناسه: " + user.id + "\n" +
-    "وضعیت: " + (user.status === "active" ? "فعال ✅" : "غیرفعال") + "\n" +
-    "تاریخ ثبت‌نام: " +
-    new Date(user.createdAt).toLocaleDateString("fa-IR", {
-      timeZone: "Asia/Tehran"
-    }) +
-    "\n\n" +
-    "📊 سهمیه\n" +
-    "مصرف امروز: " + quota.day + " از " + quota.dailyLimit + "\n" +
-    "باقی‌مانده امروز: " + quota.dailyLeft + "\n" +
-    "مصرف این ماه: " + quota.month + " از " + quota.monthlyLimit + "\n" +
-    "باقی‌مانده این ماه: " + quota.monthlyLeft + "\n\n" +
-    "🔐 رمز عبور نمایش داده نمی‌شود.",
+    `👤 حساب کاربری\n\nنام: ${user.name}\nنام کاربری: @${user.username}\nشناسه: ${user.id}\n\nمصرف امروز: ${u.day}/${u.daily}\nباقی‌مانده امروز: ${u.dailyLeft}\nمصرف ماه: ${u.month}/${u.monthly}\nباقی‌مانده ماه: ${u.monthlyLeft}`,
     {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "🏠 منوی اصلی", callback_data: "main" }]]
+      keyboard: REPLY,
+      inline: [
+        [{ text: '🏠 منوی اصلی', callback_data: 'main' }]
+      ]
     }
   );
 }
 
 async function beginSupport(chatId) {
-  const user = await requireUser(chatId);
-  if (!user) return;
+  if (!(await requireActive(chatId))) return;
 
-  const groupId = await redis("GET", KEY.supportGroup);
-
-  if (!groupId) {
-    await sendMessage(
-      chatId,
-      "🎧 گروه پشتیبانی هنوز توسط مدیر راه‌اندازی نشده است.",
-      { keyboard: REPLY_KEYBOARD }
-    );
-    return;
-  }
-
-  await setState(chatId, {
-    flow: "support",
-    step: "message"
+  await saveState(chatId, {
+    flow: 'support',
+    step: 'message'
   });
 
-  await sendMessage(chatId, "🎧 مشکل یا سؤال خود را بنویس.\n\nبرای انصراف، «لغو» را بفرست.");
+  return send(
+    chatId,
+    '🎧 پیام خود را برای پشتیبانی بنویس. حداکثر ۳۰۰۰ نویسه. برای لغو «لغو» را بفرست.'
+  );
 }
 
 async function createTicket(chatId, text) {
   const user = await getUser(chatId);
-  const groupId = await redis("GET", KEY.supportGroup);
 
-  if (!groupId) {
-    await clearState(chatId);
-    await sendMessage(chatId, "گروه پشتیبانی تنظیم نشده است؛ تیکت ارسال نشد.");
-    return;
-  }
+  if (!user || user.status !== 'active') return;
 
-  const id = await redis("INCR", KEY.ticketSequence);
+  const id = String(
+    await redis('INCR', K.ticketSeq)
+  );
 
   const ticket = {
-    id: String(id),
+    id,
     userId: String(chatId),
-    name: user?.name || "کاربر",
-    username: user?.username || "",
-    text: shortText(text, 3000),
-    status: "open",
-    createdAt: now().toISOString(),
-    updatedAt: now().toISOString(),
+    username: user.username,
+    name: user.name,
+    message: clean(text, 3000),
+    status: 'open',
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
     replies: []
   };
 
-  await setJson(KEY.ticket(id), ticket);
-  await redis("LPUSH", KEY.tickets, String(id));
-  await redis("LTRIM", KEY.tickets, 0, 499);
+  await setObj(K.ticket(id), ticket);
+
+  await redis('LPUSH', K.tickets, id);
+  await redis('LTRIM', K.tickets, 0, 499);
+
   await clearState(chatId);
 
-  try {
-    await sendMessage(
-      groupId,
-      "🎫 تیکت جدید\n\n" +
-      "شماره: #" + id + "\n" +
-      "نام: " + ticket.name + "\n" +
-      "نام کاربری: @" + (ticket.username || "ثبت نشده") + "\n" +
-      "شناسه: " + ticket.userId + "\n\n" +
-      "پیام:\n" + ticket.text
+  const group = await get(K.supportGroup);
+
+  if (group) {
+    await send(
+      group,
+      `🎫 تیکت جدید #${id}\nکاربر: ${user.name}\nشناسه: ${chatId}\n\n${ticket.message}`
+    ).catch(e =>
+      console.error('SUPPORT_GROUP_SEND_FAILED', e.message)
     );
-  } catch (error) {
-    console.error("SUPPORT_GROUP_SEND_FAILED", error.message);
-    ticket.status = "delivery_error";
-    await setJson(KEY.ticket(id), ticket);
-    await sendMessage(chatId, "تیکت ساخته شد، اما اعلان گروه ارسال نشد.");
-    return;
   }
 
-  await sendMessage(
+  return send(
     chatId,
-    "✅ پیام تو برای پشتیبانی ارسال شد.\nشماره پیگیری: #" + id,
+    `✅ تیکت شماره ${id} ثبت شد.`,
     {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "🏠 منوی اصلی", callback_data: "main" }]]
+      keyboard: REPLY,
+      inline: [
+        [{ text: '🏠 منوی اصلی', callback_data: 'main' }]
+      ]
     }
   );
 }
 
-async function isAdminAuthenticated(id) {
-  if (String(id) !== CONFIG.ADMIN_ID || !CONFIG.ADMIN_ID) return false;
-  const value = await redis("GET", KEY.adminAuth(id));
-  return value === "1";
+async function adminAuth(id) {
+  return id === C.adminId &&
+    !!(await get(K.adminSession(id)));
 }
 
-async function beginAdminLogin(chatId) {
-  if (String(chatId) !== CONFIG.ADMIN_ID || !CONFIG.ADMIN_ID) return;
+async function adminLoginStart(id) {
+  if (id !== C.adminId) return;
 
-  const failures = Number((await redis("GET", KEY.failedAdmin(chatId))) || 0);
-
-  if (failures >= 8) {
-    await sendMessage(chatId, "ورود مدیریت موقتاً محدود شده است. بعداً دوباره تلاش کن.");
-    return;
+  if (!C.adminPass1 || !C.adminPass2) {
+    return send(
+      id,
+      'رمزهای مدیریت در Vercel تنظیم نشده‌اند.'
+    );
   }
 
-  await setState(chatId, {
-    flow: "admin_login",
-    step: "password1"
+  const locked = await get(K.adminLock(id));
+
+  if (locked) {
+    return send(
+      id,
+      'به‌دلیل تلاش ناموفق، ورود مدیریت موقتاً قفل است.'
+    );
+  }
+
+  await saveState(id, {
+    flow: 'admin_login',
+    step: 'password1'
   });
 
-  await sendMessage(chatId, "🔐 رمز عبور اول مدیریت را وارد کن.");
+  return send(
+    id,
+    '🔐 ورود مدیریت\nرمز اول را وارد کن.'
+  );
 }
 
-async function handleAdminLogin(chatId, text, state) {
-  if (String(chatId) !== CONFIG.ADMIN_ID) {
-    await clearState(chatId);
-    return;
+async function adminLoginStep(id, text, state) {
+  const locked = await get(K.adminLock(id));
+
+  if (locked) {
+    await clearState(id);
+
+    return send(
+      id,
+      'ورود مدیریت موقتاً قفل است.'
+    );
   }
 
-  if (state.step === "password1") {
-    if (!CONFIG.ADMIN_PASSWORD_1 || !constantTimeEqual(text, CONFIG.ADMIN_PASSWORD_1)) {
-      const n = await redis("INCR", KEY.failedAdmin(chatId));
-      await redis("EXPIRE", KEY.failedAdmin(chatId), 3600);
-      await clearState(chatId);
-      await sendMessage(chatId, "❌ رمز اول نادرست است.");
-      console.error("ADMIN_LOGIN_FAILED", n);
-      return;
+  if (state.step === 'password1') {
+    if (!timingSafe(text, C.adminPass1)) {
+      return adminLoginFailed(id);
     }
 
-    await setState(chatId, {
-      flow: "admin_login",
-      step: "password2"
+    await saveState(id, {
+      flow: 'admin_login',
+      step: 'password2'
     });
 
-    await sendMessage(chatId, "مرحله اول تأیید شد. رمز دوم را وارد کن.");
-    return;
+    return send(id, 'رمز دوم را وارد کن.');
   }
 
-  if (state.step === "password2") {
-    if (!CONFIG.ADMIN_PASSWORD_2 || !constantTimeEqual(text, CONFIG.ADMIN_PASSWORD_2)) {
-      const n = await redis("INCR", KEY.failedAdmin(chatId));
-      await redis("EXPIRE", KEY.failedAdmin(chatId), 3600);
-      await clearState(chatId);
-      await sendMessage(chatId, "❌ رمز دوم نادرست است.");
-      console.error("ADMIN_LOGIN_FAILED", n);
-      return;
+  if (state.step === 'password2') {
+    if (!timingSafe(text, C.adminPass2)) {
+      return adminLoginFailed(id);
     }
 
-    await redis("SET", KEY.adminAuth(chatId), "1", "EX", 1800);
-    await redis("DEL", KEY.failedAdmin(chatId));
-    await clearState(chatId);
-    await showAdminMenu(chatId);
+    await redis('DEL', K.adminFail(id));
+
+    await set(
+      K.adminSession(id),
+      crypto.randomBytes(32).toString('hex'),
+      'EX',
+      1800
+    );
+
+    await clearState(id);
+
+    return adminMenu(id);
   }
 }
 
-async function showAdminMenu(chatId) {
-  await sendMessage(
-    chatId,
-    "🛡 پنل مدیریت چت جی‌بی‌تی\n\nیک بخش را انتخاب کن.",
+async function adminLoginFailed(id) {
+  const n = Number(
+    await redis('INCR', K.adminFail(id))
+  );
+
+  if (n === 1) {
+    await redis('EXPIRE', K.adminFail(id), 3600);
+  }
+
+  await clearState(id);
+
+  if (n >= 8) {
+    await set(
+      K.adminLock(id),
+      '1',
+      'EX',
+      3600
+    );
+
+    return send(
+      id,
+      '۸ تلاش ناموفق ثبت شد. ورود مدیریت برای یک ساعت قفل شد.'
+    );
+  }
+
+  return send(
+    id,
+    `رمز نادرست است. تلاش ناموفق ${n} از ۸.`
+  );
+}
+
+async function adminMenu(id) {
+  if (!(await adminAuth(id))) {
+    return send(id, 'ابتدا وارد مدیریت شو.');
+  }
+
+  return send(
+    id,
+    '⚙️ پنل مدیریت',
     {
-      keyboard: REPLY_KEYBOARD,
+      keyboard: REPLY,
       inline: ADMIN_MENU
     }
   );
 }
 
-async function showAdminStats(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
+async function adminStats(id) {
+  if (!(await adminAuth(id))) return;
 
-  const users = Number((await redis("SCARD", KEY.users)) || 0);
-  const ticketIds = await redis("LRANGE", KEY.tickets, 0, 499);
+  const [users, tickets] = await Promise.all([
+    redis('SCARD', K.users),
+    redis('LLEN', K.tickets)
+  ]);
 
-  let open = 0;
-  let closed = 0;
-  let deliveryError = 0;
-
-  if (Array.isArray(ticketIds)) {
-    for (const id of ticketIds) {
-      const ticket = await getJson(KEY.ticket(id));
-      if (ticket?.status === "open") open++;
-      else if (ticket?.status === "closed") closed++;
-      else if (ticket?.status === "delivery_error") deliveryError++;
-    }
-  }
-
-  await sendMessage(
-    chatId,
-    "📊 آمار ربات\n\n" +
-    "👥 کاربران ثبت‌نام‌شده: " + users + "\n" +
-    "🎫 تیکت‌های باز: " + open + "\n" +
-    "✅ تیکت‌های بسته‌شده: " + closed + "\n" +
-    "⚠️ خطای ارسال تیکت: " + deliveryError,
+  return send(
+    id,
+    `📊 آمار\n\nتعداد کاربران ثبت‌نام‌شده: ${users}\nتعداد شناسه‌های تیکت ذخیره‌شده: ${tickets}`,
     {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "⬅️ بازگشت به مدیریت", callback_data: "admin:menu" }]]
-    }
-  );
-}
-
-async function showAdminUsers(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const ids = await redis("SMEMBERS", KEY.users);
-  const users = [];
-
-  if (Array.isArray(ids)) {
-    for (const id of ids.slice(-15).reverse()) {
-      const user = await getUser(id);
-      if (user) {
-        users.push(
-          "• " + user.name + " — @" + user.username +
-          "\nشناسه: " + id +
-          " | وضعیت: " + user.status
-        );
-      }
-    }
-  }
-
-  await sendMessage(
-    chatId,
-    "👥 کاربران ثبت‌نام‌شده\n\n" +
-    (users.length ? users.join("\n\n") : "هنوز کاربری ثبت‌نام نکرده است.") +
-    "\n\nبرای جست‌وجوی کاربر، شناسه یا نام کاربری او را بفرست.",
-    {
-      keyboard: REPLY_KEYBOARD,
+      keyboard: REPLY,
       inline: [
-        [{ text: "🔎 جست‌وجوی کاربر", callback_data: "admin:searchuser" }],
-        [{ text: "⬅️ بازگشت به مدیریت", callback_data: "admin:menu" }]
+        [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
       ]
     }
   );
 }
 
-async function showAdminUser(chatId, targetId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
+async function adminUsers(id) {
+  if (!(await adminAuth(id))) return;
 
-  const user = await getUser(targetId);
+  const ids = await redis('SMEMBERS', K.users);
+  const rows = [];
+
+  for (
+    const uid of (
+      Array.isArray(ids) ? ids.slice(0, 10) : []
+    )
+  ) {
+    const u = await getUser(uid);
+
+    if (u) {
+      rows.push([
+        {
+          text: `${clean(u.name, 24)} — ${u.status}`,
+          callback_data: `admin:user:${uid}`
+        }
+      ]);
+    }
+  }
+
+  rows.push([
+    {
+      text: '🔎 جست‌وجوی کاربر',
+      callback_data: 'admin:searchuser'
+    }
+  ]);
+
+  rows.push([
+    {
+      text: '⬅️ مدیریت',
+      callback_data: 'admin:menu'
+    }
+  ]);
+
+  return send(
+    id,
+    `👥 کاربران\nتعداد کل: ${(Array.isArray(ids) ? ids.length : 0)}\n\nبرای دیدن اطلاعات کاربر، نام او را انتخاب کن یا جست‌وجو را بزن.`,
+    { inline: rows }
+  );
+}
+
+async function adminUser(id, target) {
+  if (!(await adminAuth(id))) return;
+
+  const user = await getUser(target);
 
   if (!user) {
-    await sendMessage(chatId, "کاربری با این مشخصات پیدا نشد.");
-    return;
+    return send(id, 'کاربر پیدا نشد.');
   }
 
-  const quota = await getQuotaUsage(targetId);
+  const u = await usage(target);
 
-  await sendMessage(
-    chatId,
-    "👤 اطلاعات کاربر\n\n" +
-    "نام: " + user.name + "\n" +
-    "نام کاربری: @" + user.username + "\n" +
-    "شناسه: " + user.id + "\n" +
-    "وضعیت: " + user.status + "\n" +
-    "ثبت‌نام: " + user.createdAt + "\n" +
-    "آخرین فعالیت: " + (user.lastActiveAt || "نامشخص") + "\n\n" +
-    "مصرف امروز: " + quota.day + " از " + quota.dailyLimit + "\n" +
-    "مصرف ماه: " + quota.month + " از " + quota.monthlyLimit + "\n\n" +
-    "رمز عبور نمایش داده نمی‌شود.",
+  return send(
+    id,
+    `👤 اطلاعات کاربر\n\nنام: ${user.name}\nنام کاربری: @${user.username}\nشناسه: ${user.id}\nوضعیت: ${user.status}\nثبت‌نام: ${user.createdAt}\nمصرف روز: ${u.day}/${u.daily}\nمصرف ماه: ${u.month}/${u.monthly}`,
     {
-      keyboard: REPLY_KEYBOARD,
+      keyboard: REPLY,
       inline: [
-        [{
-          text: user.status === "blocked" ? "🔓 رفع مسدودسازی" : "🚫 مسدودسازی کاربر",
-          callback_data: "admin:block:" + targetId
-        }],
-        [{
-          text: "✉️ ارسال پیام خصوصی",
-          callback_data: "admin:privateuser:" + targetId
-        }],
-        [{
-          text: "🎟 تنظیم سهمیه اختصاصی",
-          callback_data: "admin:userquota:" + targetId
-        }],
-        [{
-          text: "🔄 صفرکردن مصرف",
-          callback_data: "admin:resetquota:" + targetId
-        }],
-        [{
-          text: "⬅️ بازگشت به کاربران",
-          callback_data: "admin:users"
-        }]
+        [
+          {
+            text: user.status === 'blocked'
+              ? '✅ رفع مسدودی'
+              : '⛔ مسدودسازی',
+            callback_data: `admin:block:${target}`
+          }
+        ],
+        [
+          {
+            text: '✉️ پیام خصوصی',
+            callback_data: `admin:privateuser:${target}`
+          },
+          {
+            text: '♻️ صفرکردن مصرف',
+            callback_data: `admin:reset:${target}`
+          }
+        ],
+        [
+          {
+            text: '🎟 سهمیه اختصاصی',
+            callback_data: `admin:userquota:${target}`
+          }
+        ],
+        [
+          {
+            text: '⬅️ مدیریت',
+            callback_data: 'admin:menu'
+          }
+        ]
       ]
     }
   );
 }
 
-async function toggleUserBlock(chatId, targetId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
+async function adminBlock(id, target) {
+  if (!(await adminAuth(id))) return;
 
-  if (String(targetId) === CONFIG.ADMIN_ID) {
-    await sendMessage(chatId, "امکان مسدودکردن مدیر اصلی وجود ندارد.");
-    return;
-  }
-
-  const user = await getUser(targetId);
+  const user = await getUser(target);
 
   if (!user) {
-    await sendMessage(chatId, "کاربر پیدا نشد.");
-    return;
+    return send(id, 'کاربر پیدا نشد.');
   }
 
-  user.status = user.status === "blocked" ? "active" : "blocked";
-  await saveUser(targetId, user);
+  user.status = user.status === 'blocked'
+    ? 'active'
+    : 'blocked';
 
-  await sendMessage(
-    chatId,
-    user.status === "blocked" ? "🚫 کاربر مسدود شد." : "✅ مسدودسازی کاربر برداشته شد.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "👤 مشاهده کاربر", callback_data: "admin:user:" + targetId }]]
-    }
-  );
+  await saveUser(target, user);
+
+  return adminUser(id, target);
 }
 
-async function showAdminQuota(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
+async function adminQuotaMenu(id) {
+  if (!(await adminAuth(id))) return;
 
-  const daily = await getQuotaLimit("daily");
-  const monthly = await getQuotaLimit("monthly");
+  const d = await get(K.dailyConfig);
+  const m = await get(K.monthlyConfig);
 
-  await sendMessage(
-    chatId,
-    "🎟 مدیریت سهمیه‌ها\n\n" +
-    "سهمیه روزانه همگانی: " + daily + "\n" +
-    "سهمیه ماهانه همگانی: " + monthly + "\n\n" +
-    "برای تغییر سهمیه روزانه بنویس:\nروزانه 25\n\n" +
-    "برای تغییر سهمیه ماهانه بنویس:\nماهانه 400\n\n" +
-    "برای تنظیم سهمیه یک کاربر، شناسه او را همراه مقدار بفرست.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [
-        [{ text: "🔄 صفرکردن مصرف کاربر", callback_data: "admin:resetuser" }],
-        [{ text: "⬅️ بازگشت به مدیریت", callback_data: "admin:menu" }]
-      ]
-    }
-  );
-
-  await setState(chatId, {
-    flow: "admin",
-    step: "quota"
+  await saveState(id, {
+    flow: 'admin',
+    step: 'global_quota'
   });
+
+  return send(
+    id,
+    `سهمیه فعلی\nروزانه: ${d ?? C.dailyQuota}\nماهانه: ${m ?? C.monthlyQuota}\n\nبرای تغییر، یکی از این قالب‌ها را بفرست:\nروزانه 20\nماهانه 300`
+  );
 }
 
-async function resetUserQuota(chatId, targetId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const user = await getUser(targetId);
-
-  if (!user) {
-    await sendMessage(chatId, "کاربر پیدا نشد.");
-    return;
-  }
+async function resetUsage(id, target) {
+  if (!(await adminAuth(id))) return;
 
   await redis(
-    "DEL",
-    KEY.quotaDay(targetId, dateKey()),
-    KEY.quotaMonth(targetId, monthKey())
+    'DEL',
+    K.day(target, dayKey()),
+    K.month(target, monthKey())
   );
 
-  await sendMessage(chatId, "✅ مصرف روزانه و ماهانهٔ کاربر صفر شد.");
-}
-
-async function handleAdminQuotaText(chatId, text) {
-  const value = safeString(text).trim();
-  const dailyMatch = value.match(/^روزانه\s+(\d+)$/);
-  const monthlyMatch = value.match(/^ماهانه\s+(\d+)$/);
-
-  if (dailyMatch || monthlyMatch) {
-    const amount = Number((dailyMatch || monthlyMatch)[1]);
-
-    if (!Number.isInteger(amount) || amount < 1 || amount > 100000) {
-      await sendMessage(chatId, "عدد باید بین ۱ تا ۱۰۰۰۰۰ باشد.");
-      return;
-    }
-
-    if (dailyMatch) {
-      await redis("SET", KEY.configDaily, String(amount));
-    } else {
-      await redis("SET", KEY.configMonthly, String(amount));
-    }
-
-    await clearState(chatId);
-
-    await sendMessage(
-      chatId,
-      "✅ سهمیه همگانی با موفقیت تغییر کرد: " + amount,
-      {
-        keyboard: REPLY_KEYBOARD,
-        inline: [[{ text: "🎟 مدیریت سهمیه‌ها", callback_data: "admin:quota" }]]
-      }
-    );
-    return;
-  }
-
-  const personal = value.match(/^(روزانه|ماهانه)\s+(\d+)\s+(\d+)$/);
-
-  if (personal) {
-    const kind = personal[1] === "روزانه" ? "daily" : "monthly";
-    const targetId = personal[2];
-    const amount = Number(personal[3]);
-
-    if (!Number.isInteger(amount) || amount < 0 || amount > 100000) {
-      await sendMessage(chatId, "عدد سهمیه باید بین صفر تا ۱۰۰۰۰۰ باشد.");
-      return;
-    }
-
-    const user = await getUser(targetId);
-
-    if (!user) {
-      await sendMessage(chatId, "کاربر پیدا نشد.");
-      return;
-    }
-
-    const key = kind === "daily"
-      ? KEY.userDailyQuota(targetId)
-      : KEY.userMonthlyQuota(targetId);
-
-    await redis("SET", key, String(amount));
-    await clearState(chatId);
-    await sendMessage(chatId, "✅ سهمیه اختصاصی کاربر تنظیم شد.");
-    return;
-  }
-
-  await sendMessage(
-    chatId,
-    "فرمت واردشده صحیح نیست.\n\n" +
-    "نمونه سهمیه همگانی:\nروزانه 25\nماهانه 400\n\n" +
-    "نمونه سهمیه اختصاصی:\nروزانه 123456789 25\nماهانه 123456789 400"
-  );
-}
-
-async function beginBroadcast(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  await setState(chatId, {
-    flow: "admin",
-    step: "broadcast"
-  });
-
-  await sendMessage(
-    chatId,
-    "📨 متن پیام همگانی را بفرست.\n\n" +
-    "این پیام برای تمام کاربران ثبت‌نام‌شده ارسال می‌شود.\n" +
-    "برای انصراف «لغو» را بفرست."
-  );
-}
-
-async function sendBroadcast(chatId, text) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const ids = await redis("SMEMBERS", KEY.users);
-
-  if (!Array.isArray(ids) || ids.length === 0) {
-    await clearState(chatId);
-    await sendMessage(chatId, "کاربری برای ارسال پیام وجود ندارد.");
-    return;
-  }
-
-  await setState(chatId, {
-    flow: "admin",
-    step: "broadcast_confirm",
-    data: { text: shortText(text, 3500) }
-  });
-
-  await sendMessage(
-    chatId,
-    "⚠️ تأیید ارسال پیام همگانی\n\n" +
-    "تعداد کاربران: " + ids.length + "\n\n" +
-    "متن پیام:\n" + shortText(text, 2500) +
-    "\n\nآیا ارسال را تأیید می‌کنی؟",
+  return send(
+    id,
+    'مصرف روزانه و ماهانه فعلی کاربر صفر شد.',
     {
+      keyboard: REPLY,
       inline: [
-        [{ text: "✅ تأیید ارسال", callback_data: "admin:confirmbroadcast" }],
-        [{ text: "❌ انصراف", callback_data: "admin:cancelbroadcast" }]
+        [
+          {
+            text: '👤 بازگشت به کاربر',
+            callback_data: `admin:user:${target}`
+          }
+        ]
       ]
     }
   );
 }
 
-async function executeBroadcast(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
+async function setUserQuota(id, target, text) {
+  if (!(await adminAuth(id))) return;
 
-  const state = await getState(chatId);
+  const m = clean(text, 100)
+    .trim()
+    .match(/^(روزانه|ماهانه)\s+(\d+)$/);
 
-  if (!state || state.step !== "broadcast_confirm" || !state.data?.text) {
-    await sendMessage(chatId, "اطلاعات ارسال پیدا نشد.");
-    return;
+  if (!m) {
+    return send(
+      id,
+      'قالب صحیح: روزانه 20 یا ماهانه 300'
+    );
   }
 
-  const ids = await redis("SMEMBERS", KEY.users);
+  const n = Number(m[2]);
 
-  if (!Array.isArray(ids)) {
-    await sendMessage(chatId, "فهرست کاربران قابل دریافت نیست.");
-    return;
+  if (!Number.isInteger(n) || n > 100000) {
+    return send(
+      id,
+      'عدد باید بین صفر تا ۱۰۰۰۰۰ باشد.'
+    );
   }
 
-  const message = state.data.text;
-  await clearState(chatId);
+  await set(
+    m[1] === 'روزانه'
+      ? K.userDay(target)
+      : K.userMonth(target),
+    String(n)
+  );
 
-  let success = 0;
-  let failed = 0;
+  await clearState(id);
 
-  await sendMessage(chatId, "⏳ ارسال پیام همگانی آغاز شد.\nتعداد کاربران: " + ids.length);
+  return adminUser(id, target);
+}
 
-  for (const id of ids) {
+async function setGlobalQuota(id, text) {
+  if (!(await adminAuth(id))) return;
+
+  const m = clean(text, 100)
+    .trim()
+    .match(/^(روزانه|ماهانه)\s+(\d+)$/);
+
+  if (!m) {
+    return send(
+      id,
+      'قالب صحیح: روزانه 20 یا ماهانه 300'
+    );
+  }
+
+  const n = Number(m[2]);
+
+  if (!Number.isInteger(n) || n > 100000) {
+    return send(
+      id,
+      'عدد باید بین صفر تا ۱۰۰۰۰۰ باشد.'
+    );
+  }
+
+  await set(
+    m[1] === 'روزانه'
+      ? K.dailyConfig
+      : K.monthlyConfig,
+    String(n)
+  );
+
+  await clearState(id);
+
+  return send(
+    id,
+    '✅ سهمیه عمومی تغییر کرد.',
+    {
+      keyboard: REPLY,
+      inline: [
+        [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
+      ]
+    }
+  );
+}
+
+async function beginPrivate(id, target = '') {
+  if (!(await adminAuth(id))) return;
+
+  if (!target) {
+    await saveState(id, {
+      flow: 'admin',
+      step: 'private_id'
+    });
+
+    return send(
+      id,
+      'شناسه عددی کاربر را بفرست.'
+    );
+  }
+
+  if (!(await getUser(target))) {
+    return send(id, 'کاربر پیدا نشد.');
+  }
+
+  await saveState(id, {
+    flow: 'admin',
+    step: 'private_text',
+    target
+  });
+
+  return send(id, 'متن پیام خصوصی را بفرست.');
+}
+
+async function sendPrivate(id, target, text) {
+  if (!(await adminAuth(id))) return;
+
+  await send(
+    target,
+    `📩 پیام مدیریت:\n\n${clean(text, 3000)}`
+  );
+
+  await clearState(id);
+
+  return send(
+    id,
+    '✅ پیام ارسال شد.',
+    {
+      keyboard: REPLY,
+      inline: [
+        [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
+      ]
+    }
+  );
+}
+
+async function beginBroadcast(id) {
+  if (!(await adminAuth(id))) return;
+
+  await saveState(id, {
+    flow: 'admin',
+    step: 'broadcast_text'
+  });
+
+  return send(
+    id,
+    'متن پیام همگانی را بفرست. پیش از ارسال، تأیید نهایی می‌گیری.'
+  );
+}
+
+async function sendBroadcastDraft(id, text) {
+  await saveState(id, {
+    flow: 'admin',
+    step: 'broadcast_confirm',
+    text: clean(text, 3000)
+  });
+
+  return send(
+    id,
+    `پیش‌نمایش پیام همگانی:\n\n${clean(text, 3000)}\n\nآیا ارسال شود؟`,
+    {
+      inline: [
+        [
+          {
+            text: '✅ تأیید ارسال',
+            callback_data: 'admin:broadcast:confirm'
+          },
+          {
+            text: '❌ لغو',
+            callback_data: 'admin:broadcast:cancel'
+          }
+        ]
+      ]
+    }
+  );
+}
+
+async function executeBroadcast(id) {
+  if (!(await adminAuth(id))) return;
+
+  let state = await getState(id);
+
+  if (!state) {
+    return send(id, 'پیش‌نویس پیام پیدا نشد.');
+  }
+
+  if (state.step === 'broadcast_confirm') {
+    if (!state.text) {
+      return send(id, 'متن پیام پیدا نشد.');
+    }
+
+    const ids = await redis('SMEMBERS', K.users);
+
+    await setObj(
+      K.broadcastIds(id),
+      Array.isArray(ids) ? ids : [],
+      'EX',
+      3600
+    );
+
+    await redis('DEL', K.broadcastSent(id));
+
+    state = {
+      flow: 'admin',
+      step: 'broadcast_running',
+      text: state.text,
+      offset: 0,
+      ok: 0,
+      failed: 0
+    };
+
+    await saveState(id, state, 3600);
+  }
+
+  if (state.step !== 'broadcast_running') {
+    return send(
+      id,
+      'ارسال همگانی در وضعیت معتبری نیست.'
+    );
+  }
+
+  const ids = await getObj(K.broadcastIds(id)) || [];
+
+  const batch = ids.slice(
+    Number(state.offset || 0),
+    Number(state.offset || 0) + 15
+  );
+
+  let ok = Number(state.ok || 0);
+  let failed = Number(state.failed || 0);
+
+  for (const target of batch) {
+    if (
+      await redis(
+        'SISMEMBER',
+        K.broadcastSent(id),
+        String(target)
+      )
+    ) {
+      continue;
+    }
+
     try {
-      const user = await getUser(id);
+      await send(
+        target,
+        `📢 پیام مدیریت:\n\n${state.text}`
+      );
 
-      if (!user || user.status !== "active") {
-        failed++;
-        continue;
-      }
+      await redis(
+        'SADD',
+        K.broadcastSent(id),
+        String(target)
+      );
 
-      await sendMessage(id, message);
-      success++;
+      ok++;
     } catch {
       failed++;
+
+      await redis(
+        'SADD',
+        K.broadcastSent(id),
+        String(target)
+      );
     }
   }
 
-  await sendMessage(
-    chatId,
-    "✅ ارسال همگانی به پایان رسید.\n\n" +
-    "ارسال موفق: " + success + "\n" +
-    "ارسال ناموفق: " + failed + "\n" +
-    "تعداد کل: " + ids.length,
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "⬅️ پنل مدیریت", callback_data: "admin:menu" }]]
-    }
-  );
-}
+  const offset = Number(state.offset || 0) + batch.length;
 
-async function beginPrivateMessage(chatId, targetId = "") {
-  if (!(await isAdminAuthenticated(chatId))) return;
+  if (offset >= ids.length) {
+    await clearState(id);
 
-  await setState(chatId, {
-    flow: "admin",
-    step: targetId ? "private_text" : "private_id",
-    targetId: String(targetId || "")
-  });
+    await redis(
+      'DEL',
+      K.broadcastIds(id),
+      K.broadcastSent(id)
+    );
 
-  if (targetId) {
-    await sendMessage(chatId, "✉️ متن پیام برای کاربر " + targetId + " را بفرست.");
-  } else {
-    await sendMessage(chatId, "شناسه عددی کاربر موردنظر را بفرست.");
-  }
-}
-
-async function sendPrivateMessage(chatId, targetId, text) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const user = await getUser(targetId);
-
-  if (!user) {
-    await clearState(chatId);
-    await sendMessage(chatId, "کاربر پیدا نشد.");
-    return;
-  }
-
-  try {
-    await sendMessage(targetId, "📩 پیام مدیریت\n\n" + shortText(text, 3500));
-    await clearState(chatId);
-    await sendMessage(chatId, "✅ پیام خصوصی ارسال شد.");
-  } catch {
-    await sendMessage(chatId, "❌ ارسال پیام خصوصی ناموفق بود.");
-  }
-}
-
-async function showAdminTickets(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const ids = await redis("LRANGE", KEY.tickets, 0, 19);
-  const buttons = [];
-
-  if (Array.isArray(ids)) {
-    for (const id of ids) {
-      const ticket = await getJson(KEY.ticket(id));
-      if (!ticket) continue;
-
-      buttons.push([{
-        text:
-          (ticket.status === "open" ? "🟠 " :
-            ticket.status === "closed" ? "✅ " : "⚠️ ") +
-          "#" + ticket.id + " — " + shortText(ticket.name, 22),
-        callback_data: "ticket:" + ticket.id
-      }]);
-    }
-  }
-
-  if (!buttons.length) {
-    await sendMessage(
-      chatId,
-      "🎫 هنوز تیکتی ثبت نشده است.",
+    return send(
+      id,
+      `ارسال همگانی تمام شد.\nموفق: ${ok}\nناموفق: ${failed}\nتعداد کل: ${ids.length}`,
       {
-        keyboard: REPLY_KEYBOARD,
-        inline: [[{ text: "⬅️ بازگشت به مدیریت", callback_data: "admin:menu" }]]
+        inline: [
+          [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
+        ]
       }
     );
-    return;
   }
 
-  buttons.push([{ text: "⬅️ بازگشت به مدیریت", callback_data: "admin:menu" }]);
-
-  await sendMessage(chatId, "🎫 فهرست تیکت‌های اخیر\n\nیک تیکت را انتخاب کن.", {
-    keyboard: REPLY_KEYBOARD,
-    inline: buttons
-  });
-}
-
-async function showTicket(chatId, ticketId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const ticket = await getJson(KEY.ticket(ticketId));
-
-  if (!ticket) {
-    await sendMessage(chatId, "این تیکت پیدا نشد.");
-    return;
-  }
-
-  await sendMessage(
-    chatId,
-    "🎫 تیکت #" + ticket.id + "\n\n" +
-    "نام کاربر: " + ticket.name + "\n" +
-    "نام کاربری: @" + (ticket.username || "ثبت نشده") + "\n" +
-    "شناسه کاربر: " + ticket.userId + "\n" +
-    "وضعیت: " + ticket.status + "\n" +
-    "زمان ثبت: " +
-    new Date(ticket.createdAt).toLocaleString("fa-IR", {
-      timeZone: "Asia/Tehran"
-    }) +
-    "\n\nمتن پیام:\n" + ticket.text,
+  await saveState(
+    id,
     {
-      keyboard: REPLY_KEYBOARD,
+      ...state,
+      offset,
+      ok,
+      failed
+    },
+    3600
+  );
+
+  return send(
+    id,
+    `بخش ${Math.ceil(offset / 15)} از ${Math.ceil(ids.length / 15)} پردازش شد.\nموفق: ${ok} | ناموفق: ${failed}\nبرای ادامه، دکمه را بزن.`,
+    {
       inline: [
-        [{ text: "✉️ پاسخ به تیکت", callback_data: "ticketreply:" + ticket.id }],
-        [{
-          text: ticket.status === "closed" ? "🔓 بازگشایی تیکت" : "✅ بستن تیکت",
-          callback_data: "ticketclose:" + ticket.id
-        }],
-        [{ text: "⬅️ فهرست تیکت‌ها", callback_data: "admin:tickets" }]
+        [
+          {
+            text: 'ادامه ارسال',
+            callback_data: 'admin:broadcast:continue'
+          },
+          {
+            text: 'لغو',
+            callback_data: 'admin:broadcast:cancel'
+          }
+        ]
       ]
     }
   );
 }
 
-async function beginTicketReply(chatId, ticketId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
+async function showTickets(id) {
+  if (!(await adminAuth(id))) return;
 
-  const ticket = await getJson(KEY.ticket(ticketId));
+  const ids = await redis(
+    'LRANGE',
+    K.tickets,
+    0,
+    9
+  );
 
-  if (!ticket) {
-    await sendMessage(chatId, "تیکت پیدا نشد.");
-    return;
+  if (!Array.isArray(ids) || !ids.length) {
+    return send(id, 'تیکتی ثبت نشده است.');
   }
 
-  await setState(chatId, {
-    flow: "admin",
-    step: "ticket_reply",
-    ticketId: String(ticketId)
-  });
+  const rows = [];
 
-  await sendMessage(
-    chatId,
-    "✉️ پاسخ به تیکت #" + ticketId + "\n\n" +
-    "متن پاسخ را بفرست.\nبرای لغو، «لغو» را ارسال کن."
+  for (const tid of ids) {
+    const t = await getObj(K.ticket(tid));
+
+    if (t) {
+      rows.push([
+        {
+          text: `#${tid} — ${t.status} — ${clean(t.name, 25)}`,
+          callback_data: `ticket:${tid}`
+        }
+      ]);
+    }
+  }
+
+  return send(
+    id,
+    '🎫 ده تیکت اخیر:',
+    {
+      inline: [
+        ...rows,
+        [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
+      ]
+    }
   );
 }
 
-async function sendTicketReply(chatId, ticketId, text) {
-  if (!(await isAdminAuthenticated(chatId))) return;
+async function showTicket(id, tid) {
+  if (!(await adminAuth(id))) return;
 
-  const ticket = await getJson(KEY.ticket(ticketId));
+  const t = await getObj(K.ticket(tid));
 
-  if (!ticket) {
-    await clearState(chatId);
-    await sendMessage(chatId, "تیکت پیدا نشد.");
-    return;
+  if (!t) {
+    return send(id, 'تیکت پیدا نشد.');
   }
 
-  try {
-    await sendMessage(
-      ticket.userId,
-      "📩 پاسخ تیم پشتیبانی\n\n" +
-      "شماره تیکت: #" + ticket.id + "\n\n" +
-      safeString(text) +
-      "\n\nاز اینکه با ما در ارتباط بودی سپاسگزاریم."
+  return send(
+    id,
+    `تیکت #${tid}\nکاربر: ${t.name} (@${t.username})\nشناسه: ${t.userId}\nوضعیت: ${t.status}\n\n${t.message}\n\nپاسخ‌ها: ${(t.replies || []).length}`,
+    {
+      inline: [
+        [
+          {
+            text: '✍️ پاسخ',
+            callback_data: `ticket:reply:${tid}`
+          },
+          {
+            text: t.status === 'closed'
+              ? 'بازگشایی'
+              : 'بستن',
+            callback_data: `ticket:toggle:${tid}`
+          }
+        ],
+        [
+          {
+            text: '⬅️ تیکت‌ها',
+            callback_data: 'admin:tickets'
+          }
+        ]
+      ]
+    }
+  );
+}
+
+async function replyTicketStart(id, tid) {
+  if (!(await adminAuth(id))) return;
+
+  const t = await getObj(K.ticket(tid));
+
+  if (!t) {
+    return send(id, 'تیکت پیدا نشد.');
+  }
+
+  await saveState(id, {
+    flow: 'admin',
+    step: 'ticket_reply',
+    ticketId: String(tid)
+  });
+
+  return send(
+    id,
+    `پاسخ تیکت #${tid} را بنویس.`
+  );
+}
+
+async function replyTicket(id, tid, text) {
+  if (!(await adminAuth(id))) return;
+
+  const t = await getObj(K.ticket(tid));
+
+  if (!t) {
+    await clearState(id);
+    return send(id, 'تیکت پیدا نشد.');
+  }
+
+  await send(
+    t.userId,
+    `📩 پاسخ پشتیبانی به تیکت #${tid}:\n\n${clean(text, 3000)}`
+  );
+
+  t.replies = Array.isArray(t.replies)
+    ? t.replies
+    : [];
+
+  t.replies.push({
+    text: clean(text, 3000),
+    at: nowIso(),
+    by: id
+  });
+
+  t.status = 'open';
+  t.updatedAt = nowIso();
+
+  await setObj(K.ticket(tid), t);
+  await clearState(id);
+
+  return send(
+    id,
+    '✅ پاسخ ارسال شد.',
+    {
+      inline: [
+        [
+          {
+            text: '🎫 مشاهده تیکت',
+            callback_data: `ticket:${tid}`
+          }
+        ],
+        [
+          {
+            text: '⬅️ تیکت‌ها',
+            callback_data: 'admin:tickets'
+          }
+        ]
+      ]
+    }
+  );
+}
+
+async function toggleTicket(id, tid) {
+  if (!(await adminAuth(id))) return;
+
+  const t = await getObj(K.ticket(tid));
+
+  if (!t) {
+    return send(id, 'تیکت پیدا نشد.');
+  }
+
+  t.status = t.status === 'closed'
+    ? 'open'
+    : 'closed';
+
+  t.updatedAt = nowIso();
+
+  await setObj(K.ticket(tid), t);
+
+  return showTicket(id, tid);
+}
+
+async function adminStatus(id) {
+  if (!(await adminAuth(id))) return;
+
+  const group = await get(K.supportGroup);
+
+  return send(
+    id,
+    `🔌 وضعیت تنظیمات\nبله: ${C.baleToken ? 'تنظیم شده' : 'تنظیم نشده'}\nGapGPT Key: ${C.aiKey ? 'تنظیم شده' : 'تنظیم نشده'}\nGapGPT Base URL: ${C.aiBase}\nمدل: ${C.aiModel || 'تنظیم نشده'}\nUpstash: ${C.redisUrl && C.redisToken ? 'تنظیم شده' : 'تنظیم نشده'}\nگروه پشتیبانی: ${group ? 'تنظیم شده' : 'تنظیم نشده'}\nربات: ${(await isBotEnabled()) ? 'روشن' : 'خاموش'}\n\nاین بخش وجود متغیرها را بررسی می‌کند، نه سلامت زنده سرویس‌ها.`,
+    {
+      inline: [
+        [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
+      ]
+    }
+  );
+}
+
+async function adminSettings(id) {
+  if (!(await adminAuth(id))) return;
+
+  return send(
+    id,
+    '⚙️ تنظیمات\n\nبرای تعیین گروه پشتیبانی، ربات را به گروه اضافه کن و دستور /set_support_group را با حساب مدیر اصلی در گروه بفرست.\n\nکلید API، مدل و آدرس API از Environment Variables در Vercel خوانده می‌شوند. پس از تغییر آن‌ها باید Deploy جدید انجام شود.',
+    {
+      inline: [
+        [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
+      ]
+    }
+  );
+}
+
+async function toggleBot(id) {
+  if (!(await adminAuth(id))) return;
+
+  const enabled = await isBotEnabled();
+
+  await set(
+    K.botEnabled,
+    enabled ? '0' : '1'
+  );
+
+  return send(
+    id,
+    enabled ? '🔴 ربات خاموش شد.' : '🟢 ربات روشن شد.',
+    {
+      inline: [
+        [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
+      ]
+    }
+  );
+}
+
+async function handleAdminState(id, text, state) {
+  if (!(await adminAuth(id))) {
+    await clearState(id);
+
+    return send(
+      id,
+      'نشست مدیریت معتبر نیست. دوباره وارد شو.'
     );
-  } catch {
-    await sendMessage(chatId, "ارسال پاسخ ناموفق بود. شناسه کاربر یا دسترسی ربات را بررسی کن.");
-    return;
   }
 
-  ticket.replies = Array.isArray(ticket.replies) ? ticket.replies : [];
-  ticket.replies.push({
-    text: shortText(text, 3000),
-    at: now().toISOString(),
-    by: String(chatId)
-  });
+  if (state.step === 'search_user') {
+    const q = clean(text, 80)
+      .trim()
+      .replace(/^@/, '');
 
-  ticket.status = "open";
-  ticket.updatedAt = now().toISOString();
-
-  await setJson(KEY.ticket(ticket.id), ticket);
-  await clearState(chatId);
-
-  await sendMessage(
-    chatId,
-    "✅ پاسخ به کاربر ارسال شد.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [
-        [{ text: "🎫 مشاهده تیکت", callback_data: "ticket:" + ticket.id }],
-        [{ text: "📚 فهرست تیکت‌ها", callback_data: "admin:tickets" }]
-      ]
-    }
-  );
-}
-
-async function toggleTicketStatus(chatId, ticketId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const ticket = await getJson(KEY.ticket(ticketId));
-
-  if (!ticket) {
-    await sendMessage(chatId, "تیکت پیدا نشد.");
-    return;
-  }
-
-  ticket.status = ticket.status === "closed" ? "open" : "closed";
-  ticket.updatedAt = now().toISOString();
-
-  await setJson(KEY.ticket(ticket.id), ticket);
-
-  await sendMessage(
-    chatId,
-    "وضعیت تیکت #" + ticket.id + " به «" +
-    (ticket.status === "closed" ? "بسته‌شده" : "باز") +
-    "» تغییر کرد.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "🎫 مشاهده تیکت", callback_data: "ticket:" + ticket.id }]]
-    }
-  );
-}
-
-async function showAdminStatus(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const support = await redis("GET", KEY.supportGroup);
-  const botEnabled = await getBotEnabled();
-
-  await sendMessage(
-    chatId,
-    "🔌 وضعیت سرویس‌ها\n\n" +
-    "بله: " + (CONFIG.BALE_TOKEN ? "توکن تنظیم شده ✅" : "تنظیم نشده ❌") + "\n" +
-    "هوش مصنوعی: " + (CONFIG.OPENAI_KEY ? "کلید تنظیم شده ✅" : "تنظیم نشده ❌") + "\n" +
-    "مدل گفت‌وگو: " + CONFIG.OPENAI_MODEL + "\n" +
-    "آدرس API: " + CONFIG.AI_BASE_URL + "\n" +
-    "Upstash Redis: " +
-    (CONFIG.REDIS_URL && CONFIG.REDIS_TOKEN ? "تنظیم شده ✅" : "تنظیم نشده ❌") + "\n" +
-    "گروه پشتیبانی: " + (support ? "تنظیم شده ✅" : "تنظیم نشده ❌") + "\n" +
-    "وضعیت ربات: " + (botEnabled ? "روشن 🟢" : "خاموش 🔴") +
-    "\n\nاین صفحه وجود تنظیمات را بررسی می‌کند؛ سلامت واقعی APIها باید با درخواست آزمایشی سنجیده شود.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "⬅️ بازگشت به مدیریت", callback_data: "admin:menu" }]]
-    }
-  );
-}
-
-async function showAdminSettings(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  await sendMessage(
-    chatId,
-    "⚙️ تنظیمات مدیریت\n\n" +
-    "برای اتصال گروه پشتیبانی:\n" +
-    "۱. ربات را به گروه اضافه کن.\n" +
-    "۲. ربات باید اجازه ارسال پیام داشته باشد.\n" +
-    "۳. در گروه دستور /set_support_group را با حساب مدیر اصلی بفرست.\n\n" +
-    "متغیرهای API در تنظیمات محیطی Vercel قرار دارند:\n" +
-    "OPENAI_API_KEY\n" +
-    "OPENAI_MODEL\n" +
-    "AI_BASE_URL\n\n" +
-    "برای تغییر آن‌ها، متغیرها را در Vercel ویرایش و پروژه را دوباره Deploy کن.\n" +
-    "کلید API را در چت یا گروه ارسال نکن.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "⬅️ بازگشت به مدیریت", callback_data: "admin:menu" }]]
-    }
-  );
-}
-
-async function toggleBot(chatId) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const enabled = await getBotEnabled();
-  await redis("SET", KEY.botEnabled, enabled ? "0" : "1");
-
-  await sendMessage(
-    chatId,
-    enabled
-      ? "🔴 ربات خاموش شد. مدیر همچنان به پنل مدیریت دسترسی دارد."
-      : "🟢 ربات روشن شد.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "⬅️ بازگشت به مدیریت", callback_data: "admin:menu" }]]
-    }
-  );
-}
-
-async function handleAdminState(chatId, text, state) {
-  if (!(await isAdminAuthenticated(chatId))) {
-    await clearState(chatId);
-    await sendMessage(chatId, "نشست مدیریت معتبر نیست. دوباره وارد پنل مدیریت شو.");
-    return;
-  }
-
-  if (state.step === "ticket_reply") {
-    return sendTicketReply(chatId, state.ticketId, text);
-  }
-
-  if (state.step === "quota") {
-    return handleAdminQuotaText(chatId, text);
-  }
-
-  if (state.step === "search_user") {
-    const query = safeString(text).trim().replace(/^@/, "");
-    const ids = await redis("SMEMBERS", KEY.users);
-
-    if (!Array.isArray(ids)) {
-      await sendMessage(chatId, "فهرست کاربران قابل دریافت نیست.");
-      return;
-    }
+    const ids = await redis('SMEMBERS', K.users);
 
     let found = null;
 
-    for (const id of ids) {
-      const user = await getUser(id);
+    for (const uid of (Array.isArray(ids) ? ids : [])) {
+      const u = await getUser(uid);
 
       if (
-        user &&
-        (String(user.id) === query || user.username?.toLowerCase() === query.toLowerCase())
+        u &&
+        (
+          String(uid) === q ||
+          String(u.username).toLowerCase() === q.toLowerCase()
+        )
       ) {
-        found = user;
+        found = u;
         break;
       }
     }
 
-    await clearState(chatId);
+    await clearState(id);
 
-    if (!found) {
-      await sendMessage(chatId, "کاربری با این مشخصات پیدا نشد.");
-      return;
-    }
-
-    return showAdminUser(chatId, found.id);
+    return found
+      ? adminUser(id, found.id)
+      : send(id, 'کاربر پیدا نشد.');
   }
 
-  if (state.step === "broadcast") {
-    return sendBroadcast(chatId, text);
+  if (state.step === 'global_quota') {
+    return setGlobalQuota(id, text);
   }
 
-  if (state.step === "broadcast_confirm") {
-    await sendMessage(chatId, "برای تأیید یا لغو ارسال از دکمه‌های پیام قبلی استفاده کن.");
-    return;
+  if (state.step === 'user_quota') {
+    return setUserQuota(id, state.target, text);
   }
 
-  if (state.step === "private_id") {
-    const targetId = safeString(text).trim();
+  if (state.step === 'private_id') {
+    const target = clean(text, 30).trim();
 
-    if (!/^\d+$/.test(targetId)) {
-      await sendMessage(chatId, "شناسه باید عددی باشد.");
-      return;
+    if (!/^\d+$/.test(target)) {
+      return send(id, 'شناسه باید عددی باشد.');
     }
 
-    const user = await getUser(targetId);
-
-    if (!user) {
-      await sendMessage(chatId, "کاربر پیدا نشد. شناسه دیگری وارد کن.");
-      return;
+    if (!(await getUser(target))) {
+      return send(id, 'کاربر پیدا نشد.');
     }
 
-    await setState(chatId, {
-      flow: "admin",
-      step: "private_text",
-      targetId
+    await saveState(id, {
+      flow: 'admin',
+      step: 'private_text',
+      target
     });
 
-    await sendMessage(chatId, "متن پیام را برای این کاربر بفرست.");
-    return;
+    return send(id, 'متن پیام خصوصی را بفرست.');
   }
 
-  if (state.step === "private_text") {
-    return sendPrivateMessage(chatId, state.targetId, text);
+  if (state.step === 'private_text') {
+    return sendPrivate(id, state.target, text);
+  }
+
+  if (state.step === 'broadcast_text') {
+    return sendBroadcastDraft(id, text);
+  }
+
+  if (state.step === 'ticket_reply') {
+    return replyTicket(id, state.ticketId, text);
   }
 }
 
-async function handleCallback(update) {
-  const callback = update.callback_query;
-  const data = safeString(callback.data);
-  const chatId = String(callback.from?.id || callback.message?.chat?.id || "");
-  const messageChatId = String(callback.message?.chat?.id || chatId);
+async function callback(update) {
+  const cb = update.callback_query;
+  const data = str(cb.data);
+  const id = String(cb.from?.id || '');
+  const chatId = String(cb.message?.chat?.id || id);
 
-  await answerCallback(callback.id);
-  if (!chatId) return;
+  await answerCallback(cb.id);
 
-  if (data === "register") return beginRegistration(chatId);
-  if (data === "help") return showHelp(messageChatId);
-  if (data === "about") return showAbout(messageChatId);
-  if (data === "main") return startCommand(messageChatId);
+  if (!id) return;
 
-  if (data === "confirm_reg") return finishRegistration(chatId);
-
-  if (data === "cancel_reg") {
-    return cancelRegistration(chatId, await getState(chatId));
+  if (data === 'register') {
+    return beginRegistration(chatId);
   }
 
-  if (data === "newchat") {
-    const user = await requireUser(chatId);
-    if (!user) return;
-
-    await redis("DEL", KEY.context(chatId));
-
-    await sendMessage(
+  if (data === 'help') {
+    return send(
       chatId,
-      "💬 گفت‌وگوی جدید آماده است!\n\n" +
-      "حالا سؤال یا درخواستت را بنویس. تاریخچه قبلی حذف نشده است.",
-      { keyboard: REPLY_KEYBOARD }
+      '📖 راهنما\nبرای گفت‌وگو ثبت‌نام کن. از منوی گفت‌وگوی جدید، تاریخچه، حساب و پشتیبانی استفاده کن.',
+      {
+        inline: [
+          [{ text: '🏠 منوی اصلی', callback_data: 'main' }]
+        ]
+      }
     );
-    return;
   }
 
-  if (data === "history") return showHistory(chatId);
-  if (data === "account") return showAccount(chatId);
-  if (data === "support") return beginSupport(chatId);
+  if (data === 'about') {
+    return send(
+      chatId,
+      'ℹ️ چت‌جی‌بی‌تی، ربات گفت‌وگوی هوشمند در پیام‌رسان بله با تاریخچه، سهمیه و پشتیبانی.',
+      {
+        inline: [
+          [{ text: '🏠 منوی اصلی', callback_data: 'main' }]
+        ]
+      }
+    );
+  }
+
+  if (data === 'main') {
+    return start(chatId);
+  }
+
+  if (data === 'reg:confirm') {
+    return finishRegistration(chatId);
+  }
+
+  if (data === 'reg:cancel') {
+    return cancelFlow(
+      chatId,
+      await getState(chatId)
+    );
+  }
+
+  if (data === 'newchat') {
+    if (!(await requireActive(chatId))) return;
+
+    await redis('DEL', K.context(chatId));
+
+    return send(
+      chatId,
+      '💬 گفت‌وگوی جدید آماده است. پیام خود را بفرست.',
+      { keyboard: REPLY }
+    );
+  }
+
+  if (data === 'history') {
+    return showHistory(chatId);
+  }
+
+  if (data === 'account') {
+    return showAccount(chatId);
+  }
+
+  if (data === 'support') {
+    return beginSupport(chatId);
+  }
 
   if (
-    data.startsWith("admin:") ||
-    data.startsWith("ticket:") ||
-    data.startsWith("ticketreply:") ||
-    data.startsWith("ticketclose:")
+    data.startsWith('admin:') ||
+    data.startsWith('ticket:')
   ) {
-    if (!(await isAdminAuthenticated(chatId))) {
-      await sendMessage(chatId, "برای استفاده از پنل مدیریت، ابتدا با حساب مدیر اصلی وارد شو.");
-      return;
-    }
-
-    if (data === "admin:menu") return showAdminMenu(chatId);
-    if (data === "admin:stats") return showAdminStats(chatId);
-    if (data === "admin:users") return showAdminUsers(chatId);
-    if (data === "admin:quota") return showAdminQuota(chatId);
-    if (data === "admin:status") return showAdminStatus(chatId);
-    if (data === "admin:settings") return showAdminSettings(chatId);
-    if (data === "admin:tickets") return showAdminTickets(chatId);
-    if (data === "admin:broadcast") return beginBroadcast(chatId);
-    if (data === "admin:private") return beginPrivateMessage(chatId);
-
-    if (data === "admin:searchuser") {
-      await setState(chatId, {
-        flow: "admin",
-        step: "search_user"
-      });
-
-      await sendMessage(chatId, "شناسه عددی یا نام کاربری کاربر را بفرست.");
-      return;
-    }
-
-    if (data === "admin:resetuser") {
-      await setState(chatId, {
-        flow: "admin",
-        step: "reset_user"
-      });
-
-      await sendMessage(chatId, "شناسه کاربری را که می‌خواهی مصرفش صفر شود بفرست.");
-      return;
-    }
-
-    if (data === "admin:togglebot") return toggleBot(chatId);
-    if (data === "admin:confirmbroadcast") return executeBroadcast(chatId);
-
-    if (data === "admin:cancelbroadcast") {
-      await clearState(chatId);
-
-      await sendMessage(
+    if (!(await adminAuth(id))) {
+      return send(
         chatId,
-        "ارسال همگانی لغو شد.",
+        'برای استفاده از مدیریت، ابتدا با شناسه مدیر وارد شو.'
+      );
+    }
+
+    if (data === 'admin:menu') {
+      return adminMenu(id);
+    }
+
+    if (data === 'admin:stats') {
+      return adminStats(id);
+    }
+
+    if (data === 'admin:users') {
+      return adminUsers(id);
+    }
+
+    if (data === 'admin:searchuser') {
+      await saveState(id, {
+        flow: 'admin',
+        step: 'search_user'
+      });
+
+      return send(
+        id,
+        'شناسه عددی یا نام کاربری کاربر را بفرست.'
+      );
+    }
+
+    if (data === 'admin:quota') {
+      return adminQuotaMenu(id);
+    }
+
+    if (data === 'admin:tickets') {
+      return showTickets(id);
+    }
+
+    if (data === 'admin:broadcast') {
+      return beginBroadcast(id);
+    }
+
+    if (data === 'admin:private') {
+      return beginPrivate(id);
+    }
+
+    if (data === 'admin:status') {
+      return adminStatus(id);
+    }
+
+    if (data === 'admin:settings') {
+      return adminSettings(id);
+    }
+
+    if (data === 'admin:toggle') {
+      return toggleBot(id);
+    }
+
+    if (data === 'admin:logout') {
+      await redis('DEL', K.adminSession(id));
+      await clearState(id);
+
+      return send(id, 'از مدیریت خارج شدی.');
+    }
+
+    if (
+      data === 'admin:broadcast:confirm' ||
+      data === 'admin:broadcast:continue'
+    ) {
+      return executeBroadcast(id);
+    }
+
+    if (data === 'admin:broadcast:cancel') {
+      await clearState(id);
+
+      await redis(
+        'DEL',
+        K.broadcastIds(id),
+        K.broadcastSent(id)
+      );
+
+      return send(
+        id,
+        'ارسال لغو شد.',
         {
-          keyboard: REPLY_KEYBOARD,
-          inline: [[{ text: "⬅️ پنل مدیریت", callback_data: "admin:menu" }]]
+          inline: [
+            [{ text: '⬅️ مدیریت', callback_data: 'admin:menu' }]
+          ]
         }
       );
-      return;
     }
 
-    if (data === "admin:logout") {
-      await redis("DEL", KEY.adminAuth(chatId));
-      await clearState(chatId);
-
-      await sendMessage(chatId, "از پنل مدیریت خارج شدی. 🔒", {
-        keyboard: REPLY_KEYBOARD
-      });
-      return;
+    if (data.startsWith('admin:block:')) {
+      return adminBlock(id, data.slice(12));
     }
 
-    if (data.startsWith("admin:block:")) {
-      return toggleUserBlock(chatId, data.slice("admin:block:".length));
+    if (data.startsWith('admin:user:')) {
+      return adminUser(id, data.slice(11));
     }
 
-    if (data.startsWith("admin:user:")) {
-      return showAdminUser(chatId, data.slice("admin:user:".length));
+    if (data.startsWith('admin:privateuser:')) {
+      return beginPrivate(id, data.slice(18));
     }
 
-    if (data.startsWith("admin:privateuser:")) {
-      return beginPrivateMessage(chatId, data.slice("admin:privateuser:".length));
+    if (data.startsWith('admin:reset:')) {
+      return resetUsage(id, data.slice(12));
     }
 
-    if (data.startsWith("admin:resetquota:")) {
-      return resetUserQuota(chatId, data.slice("admin:resetquota:".length));
-    }
+    if (data.startsWith('admin:userquota:')) {
+      const target = data.slice(16);
 
-    if (data.startsWith("admin:userquota:")) {
-      const targetId = data.slice("admin:userquota:".length);
-
-      await setState(chatId, {
-        flow: "admin",
-        step: "user_quota",
-        targetId
+      await saveState(id, {
+        flow: 'admin',
+        step: 'user_quota',
+        target
       });
 
-      await sendMessage(
-        chatId,
-        "سهمیه اختصاصی را با این قالب بفرست:\nروزانه 20\nیا\nماهانه 300"
+      return send(
+        id,
+        'سهمیه اختصاصی را بفرست؛ مثال: روزانه 20 یا ماهانه 300'
       );
-      return;
     }
 
-    if (data.startsWith("ticketreply:")) {
-      return beginTicketReply(chatId, data.slice("ticketreply:".length));
+    if (data.startsWith('ticket:reply:')) {
+      return replyTicketStart(id, data.slice(13));
     }
 
-    if (data.startsWith("ticketclose:")) {
-      return toggleTicketStatus(chatId, data.slice("ticketclose:".length));
+    if (data.startsWith('ticket:toggle:')) {
+      return toggleTicket(id, data.slice(14));
     }
 
-    if (data.startsWith("ticket:")) {
-      return showTicket(chatId, data.slice("ticket:".length));
+    if (data.startsWith('ticket:')) {
+      return showTicket(id, data.slice(6));
     }
   }
 }
 
-async function handleAdminUserQuota(chatId, text, state) {
-  if (!(await isAdminAuthenticated(chatId))) return;
+async function groupMessage(message) {
+  const chatId = String(message.chat?.id || '');
+  const sender = String(message.from?.id || '');
 
-  const user = await getUser(state.targetId);
+  if (sender !== C.adminId) return;
+
+  const text = str(message.text).trim();
+
+  if (text === '/set_support_group') {
+    await set(K.supportGroup, chatId);
+
+    return send(
+      chatId,
+      '✅ این گروه به‌عنوان گروه پشتیبانی تنظیم شد.'
+    );
+  }
+}
+
+async function privateMessage(message) {
+  const id = String(message.chat?.id || '');
+  const text = str(message.text || '').trim();
+
+  if (!id) return;
+
+  if (
+    text === '/start' ||
+    text === '🔄 شروع مجدد'
+  ) {
+    await clearState(id);
+    return start(id);
+  }
+
+  if (text === '/set_support_group') {
+    return send(
+      id,
+      'این دستور را داخل گروه پشتیبانی ارسال کن.'
+    );
+  }
+
+  if (
+    (text === '/admin' || text === 'مدیریت ۱۰۰۱') &&
+    id === C.adminId
+  ) {
+    return adminLoginStart(id);
+  }
+
+  const state = await getState(id);
+
+  if (text === 'لغو') {
+    return cancelFlow(id, state);
+  }
+
+  if (state?.flow === 'register') {
+    return registrationStep(id, text, state);
+  }
+
+  if (state?.flow === 'admin_login') {
+    return adminLoginStep(id, text, state);
+  }
+
+  if (
+    state?.flow === 'support' &&
+    state.step === 'message'
+  ) {
+    if (text.length < 3 || text.length > 3000) {
+      return send(
+        id,
+        'پیام باید بین ۳ تا ۳۰۰۰ نویسه باشد.'
+      );
+    }
+
+    return createTicket(id, text);
+  }
+
+  if (state?.flow === 'admin') {
+    return handleAdminState(id, text, state);
+  }
+
+  if (text.startsWith('/')) {
+    return send(
+      id,
+      'این دستور شناخته‌شده نیست. /start را بفرست.'
+    );
+  }
+
+  const user = await getUser(id);
 
   if (!user) {
-    await clearState(chatId);
-    await sendMessage(chatId, "کاربر پیدا نشد.");
-    return;
-  }
-
-  const match = safeString(text).trim().match(/^(روزانه|ماهانه)\s+(\d+)$/);
-
-  if (!match) {
-    await sendMessage(chatId, "فرمت صحیح:\nروزانه 20\nیا\nماهانه 300");
-    return;
-  }
-
-  const amount = Number(match[2]);
-
-  if (!Number.isInteger(amount) || amount < 0 || amount > 100000) {
-    await sendMessage(chatId, "عدد باید بین صفر تا ۱۰۰۰۰۰ باشد.");
-    return;
-  }
-
-  const key = match[1] === "روزانه"
-    ? KEY.userDailyQuota(state.targetId)
-    : KEY.userMonthlyQuota(state.targetId);
-
-  await redis("SET", key, String(amount));
-  await clearState(chatId);
-
-  await sendMessage(
-    chatId,
-    "✅ سهمیه اختصاصی کاربر تغییر کرد.",
-    {
-      keyboard: REPLY_KEYBOARD,
-      inline: [[{ text: "👤 مشاهده کاربر", callback_data: "admin:user:" + state.targetId }]]
-    }
-  );
-}
-
-async function handleAdminResetUser(chatId, text) {
-  if (!(await isAdminAuthenticated(chatId))) return;
-
-  const targetId = safeString(text).trim();
-
-  if (!/^\d+$/.test(targetId)) {
-    await sendMessage(chatId, "شناسه باید عددی باشد.");
-    return;
-  }
-
-  await clearState(chatId);
-  return resetUserQuota(chatId, targetId);
-}
-
-async function handleGroupMessage(message) {
-  const chatId = String(message.chat?.id || "");
-  const senderId = String(message.from?.id || "");
-  const text = safeString(message.text).trim();
-
-  if (!text.startsWith("/set_support_group")) return;
-  if (!CONFIG.ADMIN_ID || senderId !== CONFIG.ADMIN_ID) return;
-
-  await redis("SET", KEY.supportGroup, chatId);
-
-  await sendMessage(
-    chatId,
-    "✅ گروه پشتیبانی تنظیم شد.\n\n" +
-    "تیکت‌های جدید به این گروه ارسال می‌شوند. پاسخ به کاربران از پنل خصوصی مدیریت انجام می‌شود."
-  );
-}
-
-async function handlePrivateMessage(message) {
-  const chatId = String(message.chat?.id || "");
-  const text = safeString(message.text).trim();
-
-  if (!chatId) return;
-
-  if (text === "/start" || text === "🔄 شروع مجدد") {
-    await clearState(chatId);
-    return startCommand(chatId);
-  }
-
-  if (text === "/set_support_group") {
-    await sendMessage(chatId, "این دستور را در گروه پشتیبانی ارسال کن، نه در گفت‌وگوی خصوصی.");
-    return;
-  }
-
-  if (text === "مدیریت ۱۰۰۱") {
-    if (chatId === CONFIG.ADMIN_ID) return beginAdminLogin(chatId);
-    return;
-  }
-
-  const state = await getState(chatId);
-
-  if (text === "لغو") {
-    if (state) {
-      if (state.flow === "registration") {
-        return cancelRegistration(chatId, state);
-      }
-
-      await clearState(chatId);
-      await sendMessage(chatId, "عملیات لغو شد.", { keyboard: REPLY_KEYBOARD });
-      return;
-    }
-
-    await sendMessage(chatId, "عملیاتی برای لغو وجود ندارد.", {
-      keyboard: REPLY_KEYBOARD
-    });
-    return;
-  }
-
-  if (state?.flow === "registration") {
-    return handleRegistration(chatId, text, state);
-  }
-
-  if (state?.flow === "admin_login") {
-    return handleAdminLogin(chatId, text, state);
-  }
-
-  if (state?.flow === "support" && state.step === "message") {
-    if (text.length < 3) {
-      await sendMessage(chatId, "لطفاً پیام خود را کمی کامل‌تر بنویس.");
-      return;
-    }
-
-    if (text.length > 3000) {
-      await sendMessage(chatId, "پیام پشتیبانی حداکثر ۳۰۰۰ نویسه می‌تواند باشد.");
-      return;
-    }
-
-    return createTicket(chatId, text);
-  }
-
-  if (state?.flow === "admin") {
-    if (state.step === "user_quota") {
-      return handleAdminUserQuota(chatId, text, state);
-    }
-
-    if (state.step === "reset_user") {
-      return handleAdminResetUser(chatId, text);
-    }
-
-    return handleAdminState(chatId, text, state);
-  }
-
-  if (text.startsWith("/")) {
-    await sendMessage(
-      chatId,
-      "این دستور شناخته نشد. برای دیدن امکانات، /start را بفرست.",
-      { keyboard: REPLY_KEYBOARD }
-    );
-    return;
-  }
-
-  const user = await getUser(chatId);
-
-  if (!user || user.status !== "active") {
-    await sendMessage(
-      chatId,
-      "برای شروع گفت‌وگو، ابتدا حساب کاربری بساز. 📝",
+    return send(
+      id,
+      'برای شروع گفت‌وگو ابتدا ثبت‌نام کن.',
       {
-        keyboard: REPLY_KEYBOARD,
-        inline: [[{ text: "📝 ثبت‌نام", callback_data: "register" }]]
+        inline: [
+          [{ text: '📝 ثبت‌نام', callback_data: 'register' }]
+        ]
       }
     );
-    return;
   }
 
-  if (user.status === "blocked") {
-    await sendMessage(
-      chatId,
-      "حساب کاربری تو مسدود شده است. برای پیگیری با پشتیبانی تماس بگیر."
+  if (user.status === 'blocked') {
+    return send(
+      id,
+      'حساب کاربری تو مسدود شده است. برای پیگیری با پشتیبانی تماس بگیر.'
     );
-    return;
   }
 
-  if (!(await getBotEnabled()) && chatId !== CONFIG.ADMIN_ID) {
-    await sendMessage(
-      chatId,
-      "🔴 ربات در حال حاضر موقتاً غیرفعال است.\nلطفاً بعداً دوباره مراجعه کن."
+  if (
+    !(await isBotEnabled()) &&
+    id !== C.adminId
+  ) {
+    return send(
+      id,
+      '🔴 ربات موقتاً غیرفعال است.'
     );
-    return;
   }
 
-  await handleAIChat(chatId, text);
+  return aiChat(id, text);
 }
 
 async function processUpdate(update) {
-  if (!update || typeof update !== "object") return;
-
-  if (update.update_id !== undefined && update.update_id !== null) {
-    const result = await redis(
-      "SET",
-      KEY.update(update.update_id),
-      "1",
-      "EX",
-      86400,
-      "NX"
-    );
-
-    if (result !== "OK") return;
-  }
-
   if (update.callback_query) {
-    await handleCallback(update);
-    return;
+    return callback(update);
   }
 
-  const message = update.message || update.edited_message;
+  const message =
+    update.message ||
+    update.edited_message;
+
   if (!message) return;
 
-  const chatType = message.chat?.type;
+  const type = message.chat?.type;
 
-  if (chatType === "group" || chatType === "supergroup") {
-    await handleGroupMessage(message);
-    return;
+  if (
+    type === 'group' ||
+    type === 'supergroup'
+  ) {
+    return groupMessage(message);
   }
 
-  if (chatType === "private") {
-    await handlePrivateMessage(message);
+  if (type === 'private') {
+    return privateMessage(message);
   }
-}
-
-function sendJson(res, statusCode, body) {
-  res.statusCode = statusCode;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.end(JSON.stringify(body));
 }
 
 async function setupWebhook(res) {
-  if (!CONFIG.BALE_TOKEN || !CONFIG.APP_URL || !CONFIG.WEBHOOK_SECRET) {
-    return sendJson(res, 500, {
-      ok: false,
-      message: "BALE_BOT_TOKEN، APP_BASE_URL و BALE_WEBHOOK_SECRET باید تنظیم شوند."
-    });
+  if (
+    !C.baleToken ||
+    !C.appUrl ||
+    !C.webhookSecret
+  ) {
+    return sendJson(
+      res,
+      500,
+      {
+        ok: false,
+        message: 'تنظیم BALE_BOT_TOKEN، APP_BASE_URL و BALE_WEBHOOK_SECRET ضروری است.'
+      }
+    );
   }
 
-  const webhookUrl = CONFIG.APP_URL + "/api/webhook?secret=" +
-    encodeURIComponent(CONFIG.WEBHOOK_SECRET);
+  const webhook =
+    `${C.appUrl}/api/webhook?secret=${encodeURIComponent(C.webhookSecret)}`;
 
   try {
-    const result = await sendBale("setWebhook", { url: webhookUrl });
+    const result = await bale(
+      'setWebhook',
+      { url: webhook }
+    );
 
-    return sendJson(res, 200, {
-      ok: true,
-      message: "درخواست ثبت Webhook ارسال شد.",
-      result
-    });
-  } catch (error) {
-    console.error("WEBHOOK_SETUP_FAILED", error.message);
+    return sendJson(
+      res,
+      200,
+      {
+        ok: true,
+        message: 'درخواست ثبت وب‌هوک ارسال شد.',
+        result
+      }
+    );
+  } catch (e) {
+    console.error(
+      'WEBHOOK_SETUP_ERROR',
+      e.message
+    );
 
-    return sendJson(res, 502, {
-      ok: false,
-      message: "ثبت Webhook ناموفق بود. توکن ربات و پشتیبانی API بله را بررسی کن."
-    });
+    return sendJson(
+      res,
+      502,
+      {
+        ok: false,
+        message: 'ثبت وب‌هوک ناموفق بود؛ توکن و API بله را بررسی کن.'
+      }
+    );
   }
 }
 
 module.exports = async function handler(req, res) {
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader('Cache-Control', 'no-store');
 
-  const url = getRequestUrl(req);
+  const url = requestUrl(req);
 
-  if (req.method === "GET") {
-    const setupValue = url.searchParams.get("setup");
+  if (req.method === 'GET') {
+    const setup = url.searchParams.get('setup');
 
     if (
-      setupValue &&
-      CONFIG.SETUP_SECRET &&
-      constantTimeEqual(setupValue, CONFIG.SETUP_SECRET)
+      setup &&
+      C.setupSecret &&
+      timingSafe(setup, C.setupSecret)
     ) {
       return setupWebhook(res);
     }
 
+    const secret = url.searchParams.get('secret');
+
     if (
-      url.searchParams.get("secret") &&
-      CONFIG.WEBHOOK_SECRET &&
-      constantTimeEqual(url.searchParams.get("secret"), CONFIG.WEBHOOK_SECRET)
+      secret &&
+      C.webhookSecret &&
+      timingSafe(secret, C.webhookSecret)
     ) {
-      return sendJson(res, 200, {
-        ok: true,
-        service: "bale-chatgpt-assistant",
-        message: "Webhook endpoint is reachable."
-      });
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          service: 'bale-gapgpt-bot',
+          message: 'Webhook endpoint is reachable.'
+        }
+      );
     }
 
-    return sendJson(res, 403, {
-      ok: false,
-      message: "دسترسی مجاز نیست."
-    });
+    return sendJson(
+      res,
+      403,
+      {
+        ok: false,
+        message: 'دسترسی مجاز نیست.'
+      }
+    );
   }
 
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "GET, POST");
-    res.statusCode = 405;
-    res.end("Method Not Allowed");
-    return;
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'GET, POST');
+
+    return sendJson(
+      res,
+      405,
+      {
+        ok: false,
+        message: 'Method Not Allowed'
+      }
+    );
   }
 
   if (
-    !CONFIG.WEBHOOK_SECRET ||
-    !constantTimeEqual(url.searchParams.get("secret"), CONFIG.WEBHOOK_SECRET)
+    !C.webhookSecret ||
+    !timingSafe(
+      url.searchParams.get('secret'),
+      C.webhookSecret
+    )
   ) {
-    res.statusCode = 401;
-    res.end("Unauthorized");
-    return;
+    return sendJson(
+      res,
+      401,
+      {
+        ok: false,
+        message: 'Unauthorized'
+      }
+    );
   }
 
   const update = parseBody(req.body);
 
-  try {
-    await processUpdate(update);
-    return sendJson(res, 200, { ok: true });
-  } catch (error) {
-    console.error("UPDATE_PROCESSING_FAILED", error.message);
+  if (
+    !update ||
+    typeof update !== 'object' ||
+    update.update_id === undefined
+  ) {
+    return sendJson(
+      res,
+      400,
+      {
+        ok: false,
+        message: 'Invalid update'
+      }
+    );
+  }
 
-    return sendJson(res, 500, {
-      ok: false,
-      message: "update_processing_failed"
-    });
+  const id = String(update.update_id);
+  const token = crypto.randomBytes(16).toString('hex');
+
+  try {
+    if (await get(K.processed(id))) {
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          duplicate: true
+        }
+      );
+    }
+
+    const acquired = await set(
+      K.processing(id),
+      token,
+      'EX',
+      120,
+      'NX'
+    );
+
+    if (acquired !== 'OK') {
+      return sendJson(
+        res,
+        503,
+        {
+          ok: false,
+          message: 'Update is being processed; retry later.'
+        }
+      );
+    }
+
+    let chatLockKey = null;
+    let chatLockToken = null;
+
+    try {
+      const message =
+        update.message ||
+        update.edited_message;
+
+      const chatId = String(
+        update.callback_query?.message?.chat?.id ||
+        message?.chat?.id ||
+        ''
+      );
+
+      if (chatId) {
+        chatLockKey = K.chatLock(chatId);
+        chatLockToken = crypto.randomBytes(16).toString('hex');
+
+        const chatAcquired = await set(
+          chatLockKey,
+          chatLockToken,
+          'EX',
+          90,
+          'NX'
+        );
+
+        if (chatAcquired !== 'OK') {
+          return sendJson(
+            res,
+            503,
+            {
+              ok: false,
+              message: 'Chat is busy; retry later.'
+            }
+          );
+        }
+      }
+
+      await processUpdate(update);
+
+      await set(
+        K.processed(id),
+        '1',
+        'EX',
+        86400
+      );
+
+      return sendJson(
+        res,
+        200,
+        { ok: true }
+      );
+    } catch (e) {
+      console.error(
+        'UPDATE_FAILED',
+        id,
+        e.message
+      );
+
+      return sendJson(
+        res,
+        500,
+        {
+          ok: false,
+          message: 'update_processing_failed'
+        }
+      );
+    } finally {
+      const script =
+        "if redis.call('GET',KEYS[1])==ARGV[1] then " +
+        "return redis.call('DEL',KEYS[1]) else return 0 end";
+
+      if (chatLockKey && chatLockToken) {
+        await redis(
+          'EVAL',
+          script,
+          1,
+          chatLockKey,
+          chatLockToken
+        ).catch(() => {});
+      }
+
+      await redis(
+        'EVAL',
+        script,
+        1,
+        K.processing(id),
+        token
+      ).catch(() => {});
+    }
+  } catch (e) {
+    console.error(
+      'WEBHOOK_REDIS_ERROR',
+      e.message
+    );
+
+    return sendJson(
+      res,
+      503,
+      {
+        ok : false,
+        message: 'Temporary storage error; retry later.'
+      }
+    );
   }
 };
