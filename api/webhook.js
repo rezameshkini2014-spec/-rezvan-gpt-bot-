@@ -68,7 +68,6 @@ function requiredConfig() {
   if (!ENV.AI_KEY) missing.push('OPENAI_API_KEY');
   if (!ENV.ADMIN_ID) missing.push('ADMIN_USER_ID');
   if (!ENV.ADMIN_PASS_1) missing.push('ADMIN_PASSWORD_1');
-  if (!ENV.ADMIN_PASS_2) missing.push('ADMIN_PASSWORD_2');
   return missing;
 }
 
@@ -304,6 +303,9 @@ async function mainMenu(chatId) {
     ],
     [
       { text: 'ℹ️ راهنما', callback_data: 'help' }
+    ],
+    [
+      { text: '🔄 شروع مجدد', callback_data: 'restart' }
     ]
   ]);
 }
@@ -432,8 +434,9 @@ async function showConversations(chatId, userId) {
     return;
   }
 
+  const currentUser = await getUser(userId);
   const buttons = chats.slice(0, 20).map(chat => [{
-    text: `${chat.id === (await getUser(userId)).active_chat ? '🟢 ' : ''}${trim(chat.title, 35)}`,
+    text: `${chat.id === currentUser?.active_chat ? '🟢 ' : ''}${trim(chat.title, 35)}`,
     callback_data: `chat:open:${chat.id}`
   }]);
 
@@ -834,8 +837,20 @@ async function handleAdminLogin(chatId, userId, text) {
       return true;
     }
 
-    await set(key('admin_login', userId), { step: 2 }, 300);
-    await send(chatId, 'رمز اول تأیید شد.\n\nرمز عبور دوم را ارسال کنید.');
+    if (process.env.ADMIN_REQUIRE_SECOND_PASSWORD === 'true' && ENV.ADMIN_PASS_2) {
+      await set(key('admin_login', userId), { step: 2 }, 300);
+      await send(chatId, 'رمز اول تأیید شد.\n\nرمز عبور دوم را ارسال کنید.');
+      return true;
+    }
+
+    await del(key('admin_login', userId));
+    await del(key('admin_failures', userId));
+    await set(key('admin_session', userId), {
+      created_at: now(),
+      expires_at: now() + ADMIN_SESSION_SECONDS
+    }, ADMIN_SESSION_SECONDS);
+    await logEvent('admin_login', userId, 'ورود موفق مدیریت');
+    await adminMenu(chatId);
     return true;
   }
 
@@ -1287,6 +1302,14 @@ async function handleCallback(callback) {
   }
 
   if (data === 'menu') return mainMenu(chatId);
+  if (data === 'restart') {
+    await del(key('state', userId));
+    const freshUser = await getUser(userId);
+    if (!freshUser?.registered) return startRegistration(chatId, userId);
+    await createConversation(freshUser);
+    await send(chatId, '🔄 ربات از نو آماده است. گفتگوی تازه ساخته شد.');
+    return mainMenu(chatId);
+  }
   if (data === 'help') return showHelp(chatId);
   if (data === 'account') return showAccount(chatId, userId);
   if (data === 'quota') return showQuota(chatId, userId);
@@ -1440,6 +1463,15 @@ async function handleMessage(message) {
 
   if (text === '/start') {
     return startRegistration(chatId, userId);
+  }
+
+  if (text === '/restart') {
+    await del(key('state', userId));
+    const currentUser = await getUser(userId);
+    if (!currentUser?.registered) return startRegistration(chatId, userId);
+    await createConversation(currentUser);
+    await send(chatId, '🔄 ربات از نو آماده است. گفتگوی تازه ساخته شد.');
+    return mainMenu(chatId);
   }
 
   if (text === '/cancel') {
