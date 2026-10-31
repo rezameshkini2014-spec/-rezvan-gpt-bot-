@@ -99,6 +99,7 @@ function keyboard(){return[
  [{text:'💬 گفت‌وگوی تازه',callback_data:'chat:new'},{text:'🗂 تاریخچه گفتگوها',callback_data:'chat:list'}],
  [{text:'⚙️ تنظیمات دستیار',callback_data:'settings'},{text:'👤 حساب کاربری',callback_data:'account'}],
  [{text:'📈 میزان استفاده',callback_data:'quota'},{text:'🎫 مرکز پشتیبانی',callback_data:'support'}],
+ [{text:'🧠 حافظه شخصی',callback_data:'memory:help'},{text:'🧩 امکانات',callback_data:'features'}],
  [{text:'📚 راهنمای کامل',callback_data:'help'},{text:'🔄 شروع مجدد',callback_data:'start'}]
 ];}
 async function mainMenu(chat){return menu(chat,'🏠 منوی اصلی چت جی‌بی‌تی\n\nبه محیط گفت‌وگو، پژوهش وب، تولید تصویر و مدیریت گفتگوها خوش آمدید.\n\nقابلیت موردنظر را با زبان طبیعی در همین گفتگو بنویسید؛ از جمله پرسش، جست‌وجوی وب یا ساخت تصویر.',keyboard());}
@@ -228,6 +229,7 @@ async function adminAction(chat,uid,data){if(!(await adminOn(uid)))return send(c
 /* States */
 async function stateHandler(chat,uid,text){const st=await get(k('state',uid));if(!st)return false;
  if(st.type==='image'){await del(k('state',uid));await makeImage(chat,uid,text);return true;}
+ if(st.type==='memory_add'){await del(k('state',uid));const item=await memoryAdd(uid,text);return send(chat,'🧠 در حافظه شخصی ذخیره شد: '+item.text);}
  if(st.type==='search'){await del(k('state',uid));await chatAnswer(chat,uid,text,true);return true;}
  if(st.type==='rename'){const c=await chatGet(uid,st.chatId);await del(k('state',uid));if(!c)return send(chat,'گفتگو پیدا نشد.');c.title=s(text,50).trim()||'گفتگو';await chatSave(uid,c);return send(chat,'عنوان گفتگو تغییر کرد.');}
  if(st.type==='support'){const t=await ticketCreate(uid,text);await del(k('state',uid));await menu(chat,'درخواست پشتیبانی ثبت شد.\nشناسه پیگیری: '+t.id+'\nوضعیت: در انتظار بررسی',[[{text:'📂 درخواست‌های من',callback_data:'support:list'}]]);if(E.admin)await send(E.admin,'درخواست پشتیبانی جدید: '+t.id+'\nکاربر: '+uid+'\n'+s(text,1500)).catch(()=>{});return true;}
@@ -249,6 +251,10 @@ async function callbackHandler(q){const data=String(q.data||''),uid=String(q.fro
  if(data==='image:new'){await set(k('state',uid),{type:'image'},900);return send(chat,'شرح تصویری را که می‌خواهید تولید شود ارسال کنید.');}
  if(data==='search:help')return menu(chat,'🔎 جست‌وجوی زنده وب\n\nبرای خبرها، قیمت‌ها، آمار و موضوعات روز، عبارت موردنظر را ارسال کنید. نتایج با پیوند منابع به پاسخ تبدیل می‌شوند.',[[{text:'🔍 شروع جست‌وجو',callback_data:'search:new'}],[{text:'🏠 منوی اصلی',callback_data:'menu'}]]);
  if(data==='search:new'){await set(k('state',uid),{type:'search'},900);return send(chat,'پرسش یا موضوع موردنظر برای جست‌وجوی وب را ارسال کنید.');}
+ if(data==='features')return sendLong(chat,'🧩 قابلیت‌های فعال در کد فعلی\n\n• گفت‌وگوی هوشمند و تاریخچه مستقل\n• جست‌وجوی وب در صورت تنظیم سرویس جست‌وجو\n• تولید تصویر در صورت فعال بودن اعتبار ارائه‌دهنده\n• حافظه شخصی با امکان ذخیره، مشاهده و حذف\n• جست‌وجو در گفتگوها، خروجی متنی و سنجاق گفتگو\n• حالت‌های آموزشی، آزمون، فلش‌کارت، برنامه‌ریزی، ترجمه، برنامه‌نویسی، داستان و خلاصه‌سازی\n\nنیازمند اتصال جداگانه: تحلیل عکس ورودی، پردازش PDF واقعی، گفت‌وگوی صوتی، تولید ویدئو، OCR فایل و خروجی فایل ارائه. این موارد در این نسخه فعال نیستند.');
+ if(data==='memory:help')return menu(chat,'🧠 حافظه شخصی\n\nمی‌توانید نکات موردنیاز برای شخصی‌سازی پاسخ‌ها را ذخیره کنید. حداکثر ۲۰ مورد، هرکدام تا ۳۵۰ نویسه. از ذخیره رمز عبور، اطلاعات بانکی یا اطلاعات حساس خودداری کنید.',[[{text:'➕ افزودن به حافظه',callback_data:'memory:add'}],[{text:'📋 مشاهده حافظه',callback_data:'memory:list'}],[{text:'🏠 منوی اصلی',callback_data:'menu'}]]);
+ if(data==='memory:add'){await set(k('state',uid),{type:'memory_add'},600);return send(chat,'متنی را که می‌خواهید در حافظه شخصی ذخیره شود ارسال کنید. برای لغو /cancel را بفرستید.');}
+ if(data==='memory:list'){const a=await memoryGet(uid);return sendLong(chat,'🧠 حافظه شخصی شما\n\n'+(a.length?a.map((x,i)=>(i+1)+'. '+x.text).join('\n'):'هنوز موردی ذخیره نشده است.')+'\n\nحذف یک مورد: /forget شماره\nحذف همه موارد: /forget all');}
  if(data==='settings')return settings(chat,uid);
  if(data==='set:tone')return menu(chat,'لحن پاسخ را انتخاب کنید.',[[{text:'متعادل و حرفه‌ای',callback_data:'pref:tone:متعادل و حرفه‌ای'},{text:'رسمی و اداری',callback_data:'pref:tone:رسمی و اداری'}],[{text:'آموزشی و روشن',callback_data:'pref:tone:آموزشی و روشن'},{text:'تخصصی و تحلیلی',callback_data:'pref:tone:تخصصی و تحلیلی'}],[{text:'↩️ تنظیمات',callback_data:'settings'}]]);
  if(data==='set:length')return menu(chat,'میزان تفصیل پاسخ را انتخاب کنید.',[[{text:'خلاصه و مستقیم',callback_data:'pref:length:خلاصه و مستقیم'},{text:'متعادل',callback_data:'pref:length:متعادل'}],[{text:'کامل و ساختاریافته',callback_data:'pref:length:کامل و ساختاریافته'},{text:'پژوهشی و مفصل',callback_data:'pref:length:پژوهشی و مفصل'}],[{text:'↩️ تنظیمات',callback_data:'settings'}]]);
@@ -280,6 +286,15 @@ async function messageHandler(m){
  if(text==='/cancel'){await del(k('state',uid));await del(k('registration',uid));return send(chat,'مرحله جاری لغو شد. برای نمایش دوباره صفحه شروع، /start را ارسال کنید.');}
  if(text==='/admin'){if(uid!==E.admin)return send(chat,'این دستور برای حساب شما فعال نیست.');const lock=await get(k('admin_lock',uid));if(lock&&lock.until>now())return send(chat,'ورود مدیریت موقتاً قفل شده است.');await set(k('admin_login',uid),{until:now()+300},300);return send(chat,'🔐 احراز هویت مدیریت\n\nرمز مدیریت را ارسال کنید.');}
  if(uid===E.admin){const pending=await get(k('admin_login',uid));if(pending){if(text!==E.password){const n=await incr(k('admin_fail',uid),3600);if(n>=6){await del(k('admin_login',uid));await set(k('admin_lock',uid),{until:now()+3600},3600);return send(chat,'به‌دلیل تلاش‌های ناموفق، ورود مدیریت برای یک ساعت قفل شد.');}return send(chat,'رمز صحیح نیست. تلاش ناموفق '+n+' از 6.');}await del(k('admin_login',uid));await del(k('admin_fail',uid));await set(k('admin_session',uid),{until:now()+SESSION},SESSION);return adminMenu(chat);}}
+ if(text.startsWith('/quiz '))return chatAnswer(chat,uid,'یک آزمون آموزشی طراحی کن: '+text.slice(6),false);
+ if(text.startsWith('/flashcards '))return chatAnswer(chat,uid,'فلش‌کارت آموزشی بساز: '+text.slice(12),false);
+ if(text.startsWith('/studyplan '))return chatAnswer(chat,uid,'برای این موضوع برنامه مطالعه تنظیم کن: '+text.slice(11),false);
+ if(text.startsWith('/translate '))return chatAnswer(chat,uid,'این متن را ترجمه کن: '+text.slice(11),false);
+ if(text.startsWith('/code '))return chatAnswer(chat,uid,'در نقش دستیار برنامه‌نویسی پاسخ بده: '+text.slice(6),false);
+ if(text.startsWith('/summary '))return chatAnswer(chat,uid,'این محتوا را خلاصه کن: '+text.slice(9),false);
+ if(text.startsWith('/mindmap '))return chatAnswer(chat,uid,'برای این موضوع نقشه ذهنی متنی بساز: '+text.slice(9),false);
+ if(text.startsWith('/story '))return chatAnswer(chat,uid,'یک داستان یا سناریو بنویس: '+text.slice(7),false);
+ if(text.startsWith('/ideas '))return chatAnswer(chat,uid,'برای این موضوع ایده‌پردازی کن: '+text.slice(7),false);
  if(text==='/new'){const u=await userGet(uid);if(!u||!u.registered)return start(chat,uid);await chatNew(u);return send(chat,'گفتگوی تازه ایجاد و فعال شد. پرسش خود را ارسال کنید.');}
  if(text.startsWith('/search '))return chatAnswer(chat,uid,text.slice(8),true);
  if(text==='/search'){await set(k('state',uid),{type:'search'},900);return send(chat,'موضوع جست‌وجوی وب را ارسال کنید.');}
