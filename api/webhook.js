@@ -97,7 +97,7 @@ function keyboard(){return[
  [{text:'📈 میزان استفاده',callback_data:'quota'},{text:'🎫 مرکز پشتیبانی',callback_data:'support'}],
  [{text:'📚 راهنمای کامل',callback_data:'help'},{text:'🔄 شروع مجدد',callback_data:'start'}]
 ];}
-async function mainMenu(chat){return menu(chat,'🏠 منوی اصلی دستیار هوشمند رضوان\n\nبه محیط گفت‌وگو، پژوهش وب، تولید تصویر و مدیریت گفتگوها خوش آمدید.\n\nقابلیت موردنظر را انتخاب کنید یا درخواست خود را به‌صورت پیام متنی بنویسید.',keyboard());}
+async function mainMenu(chat){return menu(chat,'🏠 منوی اصلی چت جی‌بی‌تی\n\nبه محیط گفت‌وگو، پژوهش وب، تولید تصویر و مدیریت گفتگوها خوش آمدید.\n\nقابلیت موردنظر را انتخاب کنید یا درخواست خود را به‌صورت پیام متنی بنویسید.',keyboard());}
 async function start(chat,uid){
  await del(k('state',uid));await del(k('admin_login',uid));
  const u=await userEnsure(uid,chat),reg=await get(k('registration',uid));
