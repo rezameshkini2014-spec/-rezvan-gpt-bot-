@@ -130,7 +130,7 @@ async function webSearch(q){
   if(response.success===false)throw new Error(s((response.errors||[]).map(x=>x.message||x.code).join('; ')||'کلودفلر درخواست جست‌وجو را نپذیرفت.',650));
   const data=response.result&&typeof response.result==='object'?response.result:response;
   const items=Array.isArray(data.items)?data.items:[];
-  const results=items.slice(0,6).map(x=>({title:s(x.title||'بدون عنوان',220),url:s(x.url,700),content:s(x.description||x.content||'',1500)})).filter(x=>/^https?:\\/\\//i.test(x.url));
+  const results=items.slice(0,6).map(x=>({title:s(x.title||'بدون عنوان',220),url:s(x.url,700),content:s(x.description||x.content||'',1500)})).filter(x=>x.url.startsWith('https://')||x.url.startsWith('http://'));
   if(!results.length)throw new Error('جست‌وجوی کلودفلر نتیجه قابل استفاده‌ای برنگرداند.');
   return{answer:'',results};
  }
