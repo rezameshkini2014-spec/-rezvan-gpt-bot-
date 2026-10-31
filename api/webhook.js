@@ -3,8 +3,9 @@
  * REZVAN AI BALE BOT — rebuilt webhook
  * Required: BALE_BOT_TOKEN, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN,
  * OPENAI_API_KEY, ADMIN_USER_ID, ADMIN_PASSWORD_1
- * Optional: AI_BASE_URL, OPENAI_MODEL, TAVILY_API_KEY,
- * IMAGE_API_KEY, IMAGE_API_BASE_URL, IMAGE_MODEL, BALE_WEBHOOK_SECRET
+ * Optional: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_AI_MODEL,
+ * AI_BASE_URL, OPENAI_MODEL, TAVILY_API_KEY, IMAGE_API_KEY,
+ * IMAGE_API_BASE_URL, IMAGE_MODEL, BALE_WEBHOOK_SECRET
  */
 const E={
  bale:process.env.BALE_BOT_TOKEN||'',
@@ -13,6 +14,9 @@ const E={
  aiKey:process.env.OPENAI_API_KEY||'',
  aiUrl:(process.env.AI_BASE_URL||'https://api.gapgpt.app/v1').replace(/\/+$/,''),
  aiModel:process.env.OPENAI_MODEL||'gpt-4o-mini',
+ cfToken:process.env.CLOUDFLARE_API_TOKEN||'',
+ cfAccount:process.env.CLOUDFLARE_ACCOUNT_ID||'',
+ cfModel:process.env.CLOUDFLARE_AI_MODEL||'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
  imageKey:process.env.IMAGE_API_KEY||process.env.OPENAI_IMAGE_API_KEY||process.env.OPENAI_API_KEY||'',
  imageUrl:(process.env.IMAGE_API_BASE_URL||process.env.AI_BASE_URL||'https://api.gapgpt.app/v1').replace(/\/+$/,''),
  imageModel:process.env.IMAGE_MODEL||'gpt-image-2.5-flare',
@@ -27,7 +31,7 @@ const P='rezvan_gpt:', MAX=12000, HISTORY=18, SESSION=3600;
 const now=()=>Math.floor(Date.now()/1000), day=()=>new Date().toISOString().slice(0,10), month=()=>new Date().toISOString().slice(0,7);
 const id=()=>Math.random().toString(36).slice(2,12), k=(...a)=>P+a.map(String).join(':');
 const s=(v,n)=>String(v==null?'':v).slice(0,n||MAX), j=(v,d)=>{try{return JSON.parse(v)}catch(_){return d}};
-function missing(){const a=[];if(!E.bale)a.push('BALE_BOT_TOKEN');if(!E.redis||!E.redisToken)a.push('UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN');if(!E.aiKey)a.push('OPENAI_API_KEY');if(!E.admin)a.push('ADMIN_USER_ID');if(!E.password)a.push('ADMIN_PASSWORD_1');return a;}
+function missing(){const a=[];if(!E.bale)a.push('BALE_BOT_TOKEN');if(!E.redis||!E.redisToken)a.push('UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN');if(!(E.cfToken&&E.cfAccount)&&!E.aiKey)a.push('CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID یا OPENAI_API_KEY');if(!E.admin)a.push('ADMIN_USER_ID');if(!E.password)a.push('ADMIN_PASSWORD_1');return a;}
 async function request(url,opt={},ms=45000){
  const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);
  try{const r=await fetch(url,{...opt,signal:c.signal});const d=await r.json().catch(()=>({}));
@@ -129,7 +133,17 @@ hasWeb?'منابع جست‌وجوی زنده در پیام سیستمی بعد�
 ].join('\n');}
 async function askAI(u,messages,w){
  const ms=[{role:'system',content:systemPrompt(u,!!w)}];if(w)ms.push({role:'system',content:webContext(w)});ms.push(...messages);
- const d=await request(E.aiUrl+'/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+E.aiKey,'Content-Type':'application/json'},body:JSON.stringify({model:E.aiModel,messages:ms,temperature:0.55})},90000);
+ let url,headers,model;
+ if(E.cfToken&&E.cfAccount){
+  url='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(E.cfAccount)+'/ai/v1/chat/completions';
+  headers={Authorization:'Bearer '+E.cfToken,'Content-Type':'application/json'};
+  model=E.cfModel;
+ }else{
+  url=E.aiUrl+'/chat/completions';
+  headers={Authorization:'Bearer '+E.aiKey,'Content-Type':'application/json'};
+  model=E.aiModel;
+ }
+ const d=await request(url,{method:'POST',headers,body:JSON.stringify({model,messages:ms,temperature:0.55,max_tokens:2048})},90000);
  const a=d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content;if(!a)throw new Error('سرویس هوش مصنوعی پاسخ متنی معتبری برنگرداند.');return typeof a==='string'?a:JSON.stringify(a);
 }
 async function chatAnswer(chat,uid,text,forceSearch){
@@ -234,7 +248,7 @@ async function messageHandler(m){
 }
 /* Entry point */
 async function handler(req,res){
- if(req.method==='GET')return res.status(200).json({ok:true,service:'Rezvan AI Bale Bot',version:'2.1.0',configured:missing().length===0,integrations:{ai:!!E.aiKey,search:!!E.tavily,imageKey:!!E.imageKey}});
+ if(req.method==='GET')return res.status(200).json({ok:true,service:'Rezvan AI Bale Bot',version:'2.2.0',configured:missing().length===0,integrations:{ai:!!(E.aiKey||(E.cfToken&&E.cfAccount)),aiProvider:E.cfToken&&E.cfAccount?'cloudflare-workers-ai':'openai-compatible',cloudflareConfigured:!!(E.cfToken&&E.cfAccount),search:!!E.tavily,imageKey:!!E.imageKey}});
  if(req.method!=='POST')return res.status(405).json({ok:false,error:'Method not allowed'});
  const absent=missing();if(absent.length){console.error('MISSING_ENV',absent);return res.status(503).json({ok:false,error:'Server configuration incomplete',missing:absent});}
  if(E.webhookSecret){const supplied=req.headers['x-bale-bot-api-secret-token']||req.headers['x-webhook-secret']||req.headers['x-telegram-bot-api-secret-token'];if(supplied!==E.webhookSecret)return res.status(401).json({ok:false,error:'Unauthorized'});}
