@@ -27,6 +27,7 @@ const E={
  admin:String(process.env.ADMIN_USER_ID||''),
  password:process.env.ADMIN_PASSWORD_1||'',
  webhookSecret:process.env.BALE_WEBHOOK_SECRET||'',
+ webhookSetupSecret:process.env.WEBHOOK_SETUP_SECRET||'',
  daily:Math.max(1,Number(process.env.DAILY_QUOTA||35)),
  monthly:Math.max(1,Number(process.env.MONTHLY_QUOTA||700))
 };
@@ -267,10 +268,15 @@ async function messageHandler(m){
 }
 /* Entry point */
 async function handler(req,res){
- if(req.method==='GET')return res.status(200).json({ok:true,service:'ChatGPT Bale Bot',version:'2.3.0',configured:missing().length===0,integrations:{ai:!!(E.aiKey||(E.cfToken&&E.cfAccount)),aiProvider:E.cfToken&&E.cfAccount?'cloudflare-workers-ai':'openai-compatible',cloudflareConfigured:!!(E.cfToken&&E.cfAccount),search:!!((E.cfSearchToken&&E.cfAccount)||E.tavily),cloudflareSearchConfigured:!!(E.cfSearchToken&&E.cfAccount),searchProvider:E.cfSearchToken&&E.cfAccount?E.cfSearchProvider:(E.tavily?'tavily':'none'),imageKey:!!E.imageKey}});
+ if(req.method==='GET'&&req.query&&req.query.setup){
+  if(!E.webhookSetupSecret||String(req.query.setup)!==E.webhookSetupSecret)return res.status(401).json({ok:false,error:'Unauthorized'});
+  if(!E.webhookSecret)return res.status(503).json({ok:false,error:'BALE_WEBHOOK_SECRET is not configured'});
+  try{const hookUrl='https://chatgpt-rezvan.vercel.app/api/webhook?secret='+encodeURIComponent(E.webhookSecret);const d=await request(B+'/setWebhook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:hookUrl})},30000);return res.status(200).json({ok:!!d.ok,webhookSet:!!d.result,description:d.description||'Webhook registration requested'});}catch(e){console.error('WEBHOOK_SETUP_ERROR',e.message);return res.status(502).json({ok:false,error:s(e.message,300)});}
+ }
+ if(req.method==='GET')return res.status(200).json({ok:true,service:'ChatGPT Bale Bot',version:'2.3.1',configured:missing().length===0,integrations:{ai:!!(E.aiKey||(E.cfToken&&E.cfAccount)),aiProvider:E.cfToken&&E.cfAccount?'cloudflare-workers-ai':'openai-compatible',cloudflareConfigured:!!(E.cfToken&&E.cfAccount),search:!!((E.cfSearchToken&&E.cfAccount)||E.tavily),cloudflareSearchConfigured:!!(E.cfSearchToken&&E.cfAccount),searchProvider:E.cfSearchToken&&E.cfAccount?E.cfSearchProvider:(E.tavily?'tavily':'none'),imageKey:!!E.imageKey}});
  if(req.method!=='POST')return res.status(405).json({ok:false,error:'Method not allowed'});
  const absent=missing();if(absent.length){console.error('MISSING_ENV',absent);return res.status(503).json({ok:false,error:'Server configuration incomplete',missing:absent});}
- if(E.webhookSecret){const supplied=req.headers['x-bale-bot-api-secret-token']||req.headers['x-webhook-secret']||req.headers['x-telegram-bot-api-secret-token'];if(supplied!==E.webhookSecret)return res.status(401).json({ok:false,error:'Unauthorized'});}
+ if(E.webhookSecret){const supplied=req.query&&req.query.secret?String(req.query.secret):'';if(supplied!==E.webhookSecret)return res.status(401).json({ok:false,error:'Unauthorized'});}
  try{const u=req.body||{};if(u.callback_query)await callbackHandler(u.callback_query);else if(u.message)await messageHandler(u.message);return res.status(200).json({ok:true});}
  catch(e){console.error('WEBHOOK_ERROR',e.status||'',e.requestId||'',e.stack||e.message);return res.status(200).json({ok:false,error:'Update processing failed',message:s(e.message,300)});}
 }
